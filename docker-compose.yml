@@ -1,0 +1,9 @@
+services:
+  app:
+    build:
+      context: .
+      network: host
+    network_mode: host
+    environment:
+      - PORT=3000
+    restart: unless-stopped

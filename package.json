@@ -1,0 +1,16 @@
+{
+  "name": "plantsim-poc",
+  "version": "1.0.0",
+  "description": "Multi-machine line simulation teaching tool — PlantSim concepts in a browser",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "fastify": "^4.28.0",
+    "@fastify/static": "^7.0.4",
+    "prom-client": "^15.1.3"
+  }
+}

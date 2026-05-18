@@ -1,0 +1,344 @@
+/* style.css — visual design for the PlantSim teaching tool */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #0f1117;
+  --surface:   #1a1d27;
+  --surface2:  #252836;
+  --border:    #2e3347;
+  --text:      #e2e8f0;
+  --text-dim:  #64748b;
+  --accent:    #6366f1;
+
+  /* machine state colours */
+  --processing: #22c55e;
+  --idle:       #64748b;
+  --starved:    #f59e0b;
+  --blocked:    #ef4444;
+  --bottleneck: #f97316;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+h1 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+/* ── Layout ─────────────────────────────────────────────────────────────── */
+
+#app {
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--idle);
+  transition: background 0.3s;
+}
+.status-dot.running { background: var(--processing); animation: pulse-dot 1s infinite; }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+/* ── Pipeline canvas container ───────────────────────────────────────────── */
+
+#pipeline-container {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  position: relative;
+}
+
+#pipeline-svg {
+  display: block;
+  width: 100%;
+  height: 400px;
+}
+
+/* ── Controls section ────────────────────────────────────────────────────── */
+
+#controls {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.controls-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.section-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  width: 100%;
+}
+
+/* Buttons */
+button {
+  cursor: pointer;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 18px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: opacity 0.15s, transform 0.1s;
+}
+button:active { transform: scale(0.96); }
+
+#btn-play   { background: var(--processing); color: #fff; }
+#btn-pause  { background: var(--starved);    color: #fff; }
+#btn-reset  { background: var(--surface2);   color: var(--text); border: 1px solid var(--border); }
+
+.speed-btn {
+  background: var(--surface2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  font-size: 0.8rem;
+}
+.speed-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* Sliders */
+.slider-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 160px;
+}
+.slider-group label {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  display: flex;
+  justify-content: space-between;
+}
+.slider-group label span { color: var(--text); font-weight: 600; }
+
+input[type=range] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  outline: none;
+  cursor: pointer;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+input[type=number] {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 10px;
+  width: 90px;
+  font-size: 0.85rem;
+}
+
+/* ── Metrics dashboard ───────────────────────────────────────────────────── */
+
+#metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.metric-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.metric-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+.metric-card .label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.metric-card .value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1;
+}
+.metric-card .unit {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+/* ── Machine table ───────────────────────────────────────────────────────── */
+
+.machine-table-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th {
+  background: var(--surface2);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+td {
+  padding: 9px 12px;
+  font-size: 0.82rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: var(--surface2); }
+
+.state-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.state-PROCESSING { background: #166534; color: #86efac; }
+.state-IDLE       { background: #1e293b; color: #94a3b8; }
+.state-STARVED    { background: #713f12; color: #fde68a; }
+.state-BLOCKED    { background: #7f1d1d; color: #fca5a5; }
+
+.bottleneck-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  background: #7c2d12;
+  color: #fb923c;
+  margin-left: 6px;
+  animation: bottleneck-pulse 1.5s ease-in-out infinite;
+}
+@keyframes bottleneck-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
+/* ── Sparkline ───────────────────────────────────────────────────────────── */
+
+.sparkline-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+.sparkline-wrap .label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+#sparkline {
+  display: block;
+  width: 100%;
+  height: 60px;
+}
+
+/* ── SVG pipeline elements (set via JS attributes) ───────────────────────── */
+
+.pipe-connector {
+  stroke: #2e3347;
+  stroke-width: 2;
+  fill: none;
+}
+.pipe-connector.blocked { stroke: #ef4444; }
+
+.machine-rect {
+  fill: #1a1d27;
+  stroke: #2e3347;
+  stroke-width: 1.5;
+  rx: 8;
+}
+.machine-rect.PROCESSING { stroke: #22c55e; }
+.machine-rect.IDLE       { stroke: #2e3347; }
+.machine-rect.STARVED    { stroke: #f59e0b; }
+.machine-rect.BLOCKED    { stroke: #ef4444; }
+.machine-rect.bottleneck { stroke: #f97316; animation: machine-bottleneck 1.2s ease-in-out infinite; }
+
+@keyframes machine-bottleneck {
+  0%, 100% { stroke-width: 1.5; }
+  50%       { stroke-width: 3.5; }
+}
+
+.buf-slot-empty { fill: #252836; stroke: #2e3347; stroke-width: 1; }
+.buf-slot-full  { fill: #6366f1; stroke: #818cf8; stroke-width: 1; }
+.buf-slot-full.warn  { fill: #b45309; stroke: #f59e0b; }
+.buf-slot-full.alert { fill: #991b1b; stroke: #ef4444; }

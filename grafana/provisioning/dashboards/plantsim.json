@@ -1,0 +1,156 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "annotations": { "list": [] },
+  "description": "PlantSim PoC — multi-machine production line metrics",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "System Overview",
+      "type": "row"
+    },
+    {
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 50 }, { "color": "red", "value": 80 }]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "id": 2,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "auto", "textMode": "auto", "colorMode": "background" },
+      "title": "Throughput (per 100 ticks)",
+      "type": "stat",
+      "targets": [{ "expr": "plantsim_throughput_per_100_ticks", "legendFormat": "Throughput", "datasource": "Prometheus" }]
+    },
+    {
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "id": 3,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background",
+        "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
+      },
+      "title": "Avg Lead Time (ticks)",
+      "type": "stat",
+      "targets": [{ "expr": "plantsim_avg_lead_time_ticks", "legendFormat": "Lead Time", "datasource": "Prometheus" }]
+    },
+    {
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "id": 4,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background",
+        "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+      },
+      "title": "Parts in System",
+      "type": "stat",
+      "targets": [{ "expr": "plantsim_parts_in_system", "legendFormat": "In System", "datasource": "Prometheus" }]
+    },
+    {
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "id": 5,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background",
+        "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 10 }] }
+      },
+      "title": "Scrapped Parts",
+      "type": "stat",
+      "targets": [{ "expr": "plantsim_scrapped_parts_total", "legendFormat": "Scrapped", "datasource": "Prometheus" }]
+    },
+    {
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "id": 6,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "title": "Simulation Tick",
+      "type": "stat",
+      "targets": [{ "expr": "plantsim_simulation_tick", "legendFormat": "Tick", "datasource": "Prometheus" }]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "id": 10,
+      "title": "Machine Utilization",
+      "type": "row"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "unit": "percentunit",
+          "min": 0, "max": 1
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "id": 11,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Machine Utilization Over Time",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "plantsim_machine_utilization_ratio", "legendFormat": "{{machine_id}} {{machine_name}}", "datasource": "Prometheus" }
+      ]
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "id": 12,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Blocked + Starved Time per Machine",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "plantsim_machine_blocked_ticks_total", "legendFormat": "{{machine_id}} BLOCKED", "datasource": "Prometheus" },
+        { "expr": "plantsim_machine_starved_ticks_total", "legendFormat": "{{machine_id}} STARVED", "datasource": "Prometheus" }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "id": 20,
+      "title": "Buffer Utilization",
+      "type": "row"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "unit": "percentunit",
+          "min": 0, "max": 1
+        }
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 15 },
+      "id": 21,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Buffer Fill Ratio Over Time",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "plantsim_buffer_utilization_ratio", "legendFormat": "{{buffer_id}}", "datasource": "Prometheus" }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "tags": ["plantsim", "simulation"],
+  "templating": { "list": [] },
+  "time": { "from": "now-5m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "PlantSim Production Line",
+  "uid": "plantsim-poc-v1",
+  "version": 1
+}
