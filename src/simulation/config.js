@@ -19,7 +19,7 @@ export const DEFAULT_CONFIG = {
   machines: [
     { id: 'M1', name: 'Rohbearbeitung',    cycleTime: 4 },
     { id: 'M2', name: 'Qualitätsprüfung',  cycleTime: 3, rejectRate: 0.10 },
-    { id: 'M3', name: 'Montage',           cycleTime: 5 },
+    { id: 'M3', name: 'Montage',           cycleTime: 15 },
     { id: 'M4', name: 'Verpackung',        cycleTime: 2 },
   ],
 
