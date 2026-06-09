@@ -757,6 +757,7 @@ const POOL_GROWTH          = 16;
 const POOL_MAX_SIZE        = 256;
 
 let particleSimState = null;   // latest server snapshot, used for jam checks
+let particleSimPaused = false;
 let particlePool = [];      // { node: <circle> head, tail: <circle>, inUse: boolean }
 let particles    = [];      // active Particle objects
 let lastFrameTs  = 0;
@@ -886,7 +887,14 @@ function advanceParticles(now) {
 }
 
 function particleLoop(ts) {
+  const dt = lastFrameTs > 0 ? ts - lastFrameTs : 0;
   lastFrameTs = ts;
+
+  if (particleSimPaused && dt > 0) {
+    // Freeze: roll every active particle's clock forward by dt.
+    for (const p of particles) p.startedAt += dt;
+  }
+
   advanceParticles(ts);
   rafHandle = requestAnimationFrame(particleLoop);
 }
@@ -972,6 +980,8 @@ async function applyReset(action) {
   const newState = await fetch('/api/state').then(r => r.json());
   lastState = newState;
   buildPipeline();
+  prevStateForDiff = newState;   // baseline; no spurious deltas next frame
+  resetParticles();
   buildControlSliders(newState);
   // Sync static sliders to the post-reset state
   document.getElementById('src-interval').value = newState.source.interval;
@@ -1046,6 +1056,7 @@ function connectSSE() {
     if (transfers.length > 0) spawnFromEvents(transfers);
     prevStateForDiff = state;
     particleSimState = state;
+    particleSimPaused = !state.running;
 
     if (!slidersBuilt && state.machines) {
       buildControlSliders(state);
