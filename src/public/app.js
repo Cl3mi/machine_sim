@@ -189,10 +189,10 @@ function drawMachine(id, x, y, name, cycleTime) {
     rx: 8, class: 'machine-rect IDLE', fill: '#1a1d27', stroke: '#2e3347', 'stroke-width': 1.5 }));
 
   // Machine name (top)
-  const shortName = name.length > 13 ? name.slice(0, 12) + '…' : name;
-  g.appendChild(txt(shortName, { x: x + MACH_W / 2, y: y + 14, 'text-anchor': 'middle',
+  const shortName = name.length > 17 ? name.slice(0, 16) + '…' : name;
+  g.appendChild(txt(shortName, { x: x + MACH_W / 2, y: y + 11, 'text-anchor': 'middle',
     'font-size': '9.5', fill: '#94a3b8' }));
-  g.appendChild(txt(id, { x: x + MACH_W / 2, y: y + 26, 'text-anchor': 'middle',
+  g.appendChild(txt(id, { x: x + MACH_W / 2, y: y + 22, 'text-anchor': 'middle',
     'font-size': '9', fill: '#64748b' }));
 
   // Progress arc (circle)
