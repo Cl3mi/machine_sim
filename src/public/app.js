@@ -99,9 +99,11 @@ function detectTransfers(prev, next) {
     state.buffers.find(b => b.id === id) ?? { totalPartsOut: 0, load: 0, capacity: 0 };
   const machBy = (state, id) =>
     state.machines.find(m => m.id === id) ?? { partsProcessed: 0 };
+  const sourceOf = (state) => state.source ?? { totalGenerated: 0 };
+  const scrapOf  = (state) => state.scrap  ?? { partsReceived: 0 };
 
   // Source -> BUF0
-  const srcDelta = next.source.totalGenerated - prev.source.totalGenerated;
+  const srcDelta = sourceOf(next).totalGenerated - sourceOf(prev).totalGenerated;
   if (srcDelta > 0) events.push({ connectorId: 'conn-src-b0', kind: 'good', count: srcDelta });
 
   // Buffer pulls (cumulative totalPartsOut)
@@ -121,7 +123,7 @@ function detectTransfers(prev, next) {
   if (m1d > 0) events.push({ connectorId: 'conn-m1-b1', kind: 'good', count: m1d });
 
   const m2d  = machBy(next, 'M2').partsProcessed - machBy(prev, 'M2').partsProcessed;
-  const m2sd = next.scrap.partsReceived - prev.scrap.partsReceived;
+  const m2sd = scrapOf(next).partsReceived - scrapOf(prev).partsReceived;
   if (m2sd > 0)            events.push({ connectorId: 'conn-m2-scrap', kind: 'scrap', count: m2sd });
   const m2good = Math.max(0, m2d - m2sd);
   if (m2good > 0)          events.push({ connectorId: 'conn-m2-b2', kind: 'good', count: m2good });
