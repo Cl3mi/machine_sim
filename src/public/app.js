@@ -757,7 +757,7 @@ const POOL_GROWTH          = 16;
 const POOL_MAX_SIZE        = 256;
 
 let particleSimState = null;   // latest server snapshot, used for jam checks
-let particlePool = [];      // { node: <circle>, inUse: boolean }
+let particlePool = [];      // { node: <circle> head, tail: <circle>, inUse: boolean }
 let particles    = [];      // active Particle objects
 let lastFrameTs  = 0;
 let rafHandle    = null;
