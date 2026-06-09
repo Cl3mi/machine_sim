@@ -833,6 +833,14 @@ function advanceParticles(now) {
   // into the jam (closer to the buffer wall).
   for (let i = 0; i < particles.length; i++) {
     const p   = particles[i];
+    const fn  = connectorPointAt[p.connectorId];
+    if (!fn) {
+      releaseParticleNode(p.slot);
+      particles.splice(i, 1);
+      i--;
+      continue;
+    }
+
     const raw = (now - p.startedAt) / p.duration;
     let   t   = Math.max(0, Math.min(1, raw));
 
@@ -847,8 +855,6 @@ function advanceParticles(now) {
       p.jammed = false;
     }
 
-    const fn = connectorPointAt[p.connectorId];
-    if (!fn) continue;
     const pt = fn(t);
     p.slot.node.setAttribute('cx', pt.x.toFixed(2));
     p.slot.node.setAttribute('cy', pt.y.toFixed(2));
