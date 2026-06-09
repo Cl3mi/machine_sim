@@ -765,15 +765,22 @@ let rafHandle    = null;
 function ensureParticleNodes(n) {
   const layer = document.getElementById('particle-layer');
   while (particlePool.length < n) {
-    const c = el('circle', { r: PARTICLE_RADIUS, class: 'particle hidden' });
-    layer.appendChild(c);
-    particlePool.push({ node: c, inUse: false });
+    const tail = el('circle', { r: PARTICLE_RADIUS * 1.6, class: 'particle-tail hidden' });
+    const head = el('circle', { r: PARTICLE_RADIUS,         class: 'particle hidden' });
+    layer.appendChild(tail);
+    layer.appendChild(head);   // head drawn over tail
+    particlePool.push({ node: head, tail, inUse: false });
   }
 }
 
 function acquireParticleNode() {
   for (const slot of particlePool) {
-    if (!slot.inUse) { slot.inUse = true; slot.node.classList.remove('hidden'); return slot; }
+    if (!slot.inUse) {
+      slot.inUse = true;
+      slot.node.classList.remove('hidden');
+      slot.tail.classList.remove('hidden');
+      return slot;
+    }
   }
   if (particlePool.length >= POOL_MAX_SIZE) return null;
   ensureParticleNodes(Math.min(POOL_MAX_SIZE, particlePool.length + POOL_GROWTH));
@@ -783,6 +790,7 @@ function acquireParticleNode() {
 function releaseParticleNode(slot) {
   slot.inUse = false;
   slot.node.classList.add('hidden');
+  slot.tail.classList.add('hidden');
 }
 
 function isDestBufferFull(connectorId) {
@@ -800,6 +808,8 @@ function spawnParticle({ connectorId, kind, delayMs = 0 }) {
   if (!slot) return;   // pool exhausted; drop this spawn
   if (kind === 'scrap') slot.node.classList.add('scrap');
   else                  slot.node.classList.remove('scrap');
+  if (kind === 'scrap') slot.tail.classList.add('scrap');
+  else                  slot.tail.classList.remove('scrap');
 
   const now = performance.now();
   particles.push({
@@ -858,6 +868,10 @@ function advanceParticles(now) {
     const pt = fn(t);
     p.slot.node.setAttribute('cx', pt.x.toFixed(2));
     p.slot.node.setAttribute('cy', pt.y.toFixed(2));
+    const tailT = Math.max(0, t - 0.08);
+    const tailPt = fn(tailT);
+    p.slot.tail.setAttribute('cx', tailPt.x.toFixed(2));
+    p.slot.tail.setAttribute('cy', tailPt.y.toFixed(2));
   }
 
   // Retire un-jammed particles that finished traveling.

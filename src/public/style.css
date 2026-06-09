@@ -602,3 +602,10 @@ g[id^="elem-M"]:hover .machine-rect:not(.selected):not(.bottleneck) {
 }
 .particle.scrap { fill: var(--blocked); }
 .particle.hidden { visibility: hidden; }
+.particle-tail {
+  fill: var(--accent);
+  opacity: 0.22;
+  pointer-events: none;
+}
+.particle-tail.scrap { fill: var(--blocked); }
+.particle-tail.hidden { visibility: hidden; }
