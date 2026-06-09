@@ -113,6 +113,22 @@ function buildPipeline() {
   const scrapRateLabel = txt('10%', { id: 'scrap-rate-label', x: m2CentreX + 4, y: SCRAP_Y + 14, fill: '#f87171', 'font-size': '10' });
   svg.appendChild(scrapRateLabel);
 
+  // ── Particle overlay (sits above connectors, below stations) ─────────────
+  const defs = el('defs');
+  const glow = el('filter', {
+    id: 'part-glow',
+    x: '-50%', y: '-50%', width: '200%', height: '200%',
+  });
+  glow.appendChild(el('feGaussianBlur', { stdDeviation: '2.2' }));
+  defs.appendChild(glow);
+  svg.appendChild(defs);
+
+  const particleLayer = el('g', {
+    id: 'particle-layer',
+    filter: 'url(#part-glow)',
+  });
+  svg.appendChild(particleLayer);
+
   // ── Source ─────────────────────────────────────────────────────────────────
   drawSource();
 
@@ -154,10 +170,6 @@ function drawSource() {
 
   g.appendChild(txt('SOURCE', { x: x + SRC_W / 2, y: y + 18, 'text-anchor': 'middle', 'font-size': '10', fill: '#818cf8' }));
   g.appendChild(txt('', { id: 'src-stock-text', x: x + SRC_W / 2, y: y + 38, 'text-anchor': 'middle', 'font-size': '11' }));
-
-  // Emit pulse ring (animated when part is emitted)
-  g.appendChild(el('circle', { id: 'src-pulse', cx: x + SRC_W, cy: MAIN_Y, r: 0, fill: 'none',
-    stroke: '#818cf8', 'stroke-width': 2, opacity: 0 }));
 
   svg.appendChild(g);
 }
@@ -284,7 +296,6 @@ function updatePipeline(state, metrics) {
   const src         = state.source;
   const stockFill   = document.getElementById('src-stock-fill');
   const stockText   = document.getElementById('src-stock-text');
-  const srcPulse    = document.getElementById('src-pulse');
   const initialStock = 200; // keep in sync with DEFAULT_CONFIG — used for bar scaling
 
   if (stockFill) {
@@ -295,22 +306,6 @@ function updatePipeline(state, metrics) {
   }
   if (stockText) {
     stockText.textContent = src.materialStock === 0 ? '∞' : src.materialStock;
-  }
-
-  // Emit pulse animation
-  if (src.lastEmitted && srcPulse) {
-    srcPulse.setAttribute('r', 0);
-    srcPulse.setAttribute('opacity', 0.8);
-    // Trigger reflow then animate via CSS
-    void srcPulse.getBoundingClientRect();
-    srcPulse.style.transition = 'none';
-    srcPulse.setAttribute('r', 0);
-    srcPulse.setAttribute('opacity', 0.8);
-    setTimeout(() => {
-      srcPulse.style.transition = 'r 0.4s ease-out, opacity 0.4s ease-out';
-      srcPulse.setAttribute('r', 18);
-      srcPulse.setAttribute('opacity', 0);
-    }, 10);
   }
 
   // ── Buffers ────────────────────────────────────────────────────────────────
