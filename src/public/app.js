@@ -41,6 +41,7 @@ const LAYOUT = {
 
 let lastState   = null;
 let lastMetrics = null;
+let selectedMachineId = null;   // null = panel closed; otherwise 'M1'..'M4'
 
 const sparklineData = [];   // rolling window of throughput values
 const SPARKLINE_LEN = 60;
@@ -173,6 +174,7 @@ function drawBuffer(id, x, y, defaultCap) {
 
 function drawMachine(id, x, y, name, cycleTime) {
   const g = el('g', { id: `elem-${id}` });
+  g.addEventListener('click', () => openMachineDetail(id));
 
   // Background rect
   g.appendChild(el('rect', { id: `mach-rect-${id}`, x, y, width: MACH_W, height: MACH_H,
@@ -213,6 +215,32 @@ function drawMachine(id, x, y, name, cycleTime) {
     rx: 7, fill: '#1e293b' }));
   g.appendChild(txt('IDLE', { id: `mach-badge-${id}`, x: x + 29, y: y + MACH_H - 7,
     'text-anchor': 'middle', 'font-size': '8', fill: '#94a3b8' }));
+
+  // Bottleneck marker (hidden by default — shown when this machine is the bottleneck)
+  const bnG = el('g', { id: `mach-bn-${id}`, class: 'mach-bn-marker', visibility: 'hidden' });
+  const badgeW = 78;
+  const badgeH = 18;
+  const badgeX = x + MACH_W / 2 - badgeW / 2;
+  const badgeY = y - badgeH - 10;            // sits above the machine
+  bnG.appendChild(el('rect', {
+    x: badgeX, y: badgeY, width: badgeW, height: badgeH, rx: 9,
+    fill: '#7c2d12', stroke: '#f97316', 'stroke-width': 1.2,
+  }));
+  // Warning glyph + label
+  bnG.appendChild(txt('⚠ ENGPASS', {
+    x: x + MACH_W / 2, y: badgeY + badgeH - 5,
+    'text-anchor': 'middle', 'font-size': '10', 'font-weight': '700',
+    fill: '#fdba74', 'font-family': 'Inter, system-ui, sans-serif',
+  }));
+  // Arrow pointing down to the machine
+  const arrowTopY = badgeY + badgeH;
+  const arrowTipY = y - 1;
+  const arrowCx   = x + MACH_W / 2;
+  bnG.appendChild(el('polygon', {
+    points: `${arrowCx - 5},${arrowTopY} ${arrowCx + 5},${arrowTopY} ${arrowCx},${arrowTipY}`,
+    fill: '#f97316',
+  }));
+  g.appendChild(bnG);
 
   svg.appendChild(g);
 }
@@ -316,6 +344,9 @@ function updatePipeline(state, metrics) {
     setTextContent('scrap-rate-label', (m2.rejectRate * 100).toFixed(0) + '%');
   }
 
+  // ── Machine detail panel (if open) ─────────────────────────────────────────
+  updateMachineDetail();
+
   // ── Header tick ────────────────────────────────────────────────────────────
   setTextContent('tick-counter', state.tick);
   const dot   = document.getElementById('status-dot');
@@ -396,19 +427,126 @@ function updateMachine(m, mMetrics) {
     badgeBg.setAttribute('fill', bgColours[m.state] ?? '#1e293b');
   }
 
-  // Machine rect stroke by state + bottleneck
+  // Machine rect stroke by state + bottleneck + selection
+  const isBottleneck = mMetrics?.bottleneck ?? false;
+  const bnMarker = document.getElementById(`mach-bn-${m.id}`);
+  if (bnMarker) bnMarker.setAttribute('visibility', isBottleneck ? 'visible' : 'hidden');
+
   if (rectEl) {
-    const isBottleneck = mMetrics?.bottleneck ?? false;
-    const stateClass   = isBottleneck ? 'machine-rect bottleneck' : `machine-rect ${m.state}`;
+    const isSelected   = selectedMachineId === m.id;
+    let stateClass = `machine-rect ${m.state}`;
+    if (isBottleneck) stateClass = 'machine-rect bottleneck';
+    if (isSelected)   stateClass += ' selected';
     rectEl.setAttribute('class', stateClass);
     const strokeColours = { PROCESSING: '#22c55e', IDLE: '#2e3347', STARVED: '#f59e0b', BLOCKED: '#ef4444' };
-    rectEl.setAttribute('stroke', isBottleneck ? '#f97316' : (strokeColours[m.state] ?? '#2e3347'));
+    const baseStroke   = isBottleneck ? '#f97316' : (strokeColours[m.state] ?? '#2e3347');
+    rectEl.setAttribute('stroke', isSelected ? '#818cf8' : baseStroke);
   }
 
   // Utilization
   if (utilEl && mMetrics) {
     utilEl.textContent = (mMetrics.utilization * 100).toFixed(0) + '%';
   }
+}
+
+// ── Machine detail panel ─────────────────────────────────────────────────────
+
+function openMachineDetail(id) {
+  selectedMachineId = id;
+  const panel = document.getElementById('machine-detail');
+  if (panel) panel.hidden = false;
+  // Push an immediate render so the panel populates before the next SSE frame
+  updateMachineDetail();
+  if (lastState) {
+    // Re-run machine rect update so the selection ring appears immediately
+    const metricsMap = {};
+    if (lastMetrics?.machines) for (const m of lastMetrics.machines) metricsMap[m.id] = m;
+    for (const m of lastState.machines) updateMachine(m, metricsMap[m.id]);
+  }
+}
+
+function closeMachineDetail() {
+  const prev = selectedMachineId;
+  selectedMachineId = null;
+  const panel = document.getElementById('machine-detail');
+  if (panel) panel.hidden = true;
+  if (prev && lastState) {
+    const metricsMap = {};
+    if (lastMetrics?.machines) for (const m of lastMetrics.machines) metricsMap[m.id] = m;
+    for (const m of lastState.machines) updateMachine(m, metricsMap[m.id]);
+  }
+}
+
+function updateMachineDetail() {
+  if (!selectedMachineId || !lastState) return;
+  const panel = document.getElementById('machine-detail');
+  if (!panel || panel.hidden) return;
+
+  const m = lastState.machines.find(x => x.id === selectedMachineId);
+  if (!m) return;
+  const mm = lastMetrics?.machines?.find(x => x.id === selectedMachineId);
+
+  setTextContent('md-id',   m.id);
+  setTextContent('md-name', m.name);
+
+  const bn = document.getElementById('md-bottleneck');
+  if (bn) bn.hidden = !(mm?.bottleneck);
+
+  const stateEl = document.getElementById('md-state');
+  if (stateEl) {
+    stateEl.textContent = m.state;
+    stateEl.className   = `state-badge state-${m.state}`;
+  }
+
+  setTextContent('md-part', m.currentPartId != null ? `#${m.currentPartId}` : '—');
+
+  // Cycle progress
+  const elapsed = m.cycleTime - m.ticksLeft;
+  setTextContent('md-cycle-text', `${Math.max(0, elapsed)} / ${m.cycleTime} ticks`);
+  const fill = document.getElementById('md-cycle-fill');
+  if (fill) {
+    const ratio = m.cycleTime > 0 ? Math.max(0, Math.min(1, elapsed / m.cycleTime)) : 0;
+    fill.style.width = (ratio * 100).toFixed(1) + '%';
+    const fillColours = { PROCESSING: '#22c55e', IDLE: '#64748b', STARVED: '#f59e0b', BLOCKED: '#ef4444' };
+    fill.style.background = fillColours[m.state] ?? '#64748b';
+  }
+
+  // Stats
+  setTextContent('md-util',      ((mm?.utilization ?? 0) * 100).toFixed(1) + '%');
+  setTextContent('md-processed', m.partsProcessed);
+  setTextContent('md-wait',      (mm?.avgQueueWait ?? 0).toFixed(1) + ' ticks');
+
+  // Reject rate only meaningful for the quality gate (M2 or any non-zero)
+  const rejectStat = document.getElementById('md-reject-stat');
+  if (rejectStat) {
+    if (m.rejectRate && m.rejectRate > 0) {
+      rejectStat.hidden = false;
+      setTextContent('md-reject', (m.rejectRate * 100).toFixed(0) + '%');
+    } else {
+      rejectStat.hidden = true;
+    }
+  }
+
+  // Time breakdown stacked bar
+  const total = m.ticksProcessing + m.ticksBlocked + m.ticksStarved + m.ticksIdle;
+  setTextContent('md-total-ticks', `${total} ticks`);
+  const segs = {
+    processing: total > 0 ? m.ticksProcessing / total : 0,
+    blocked:    total > 0 ? m.ticksBlocked    / total : 0,
+    starved:    total > 0 ? m.ticksStarved    / total : 0,
+    idle:       total > 0 ? m.ticksIdle       / total : 0,
+  };
+  const stack = document.getElementById('md-stack');
+  if (stack) {
+    stack.children[0].style.width = (segs.processing * 100).toFixed(2) + '%';
+    stack.children[1].style.width = (segs.blocked    * 100).toFixed(2) + '%';
+    stack.children[2].style.width = (segs.starved    * 100).toFixed(2) + '%';
+    stack.children[3].style.width = (segs.idle       * 100).toFixed(2) + '%';
+  }
+  setTextContent('md-pct-processing', (segs.processing * 100).toFixed(0) + '%');
+  setTextContent('md-pct-blocked',    (segs.blocked    * 100).toFixed(0) + '%');
+  setTextContent('md-pct-starved',    (segs.starved    * 100).toFixed(0) + '%');
+  setTextContent('md-pct-idle',       (segs.idle       * 100).toFixed(0) + '%');
 }
 
 function setConnectorBlocked(id, blocked) {
@@ -640,6 +778,13 @@ function connectSSE() {
     setTimeout(connectSSE, 2000);
   });
 }
+
+// ── Machine detail panel: close handlers ─────────────────────────────────────
+
+document.getElementById('md-close')?.addEventListener('click', closeMachineDetail);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && selectedMachineId) closeMachineDetail();
+});
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 

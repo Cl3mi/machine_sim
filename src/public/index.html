@@ -22,6 +22,69 @@
   <!-- ── Pipeline visualisation ──────────────────────────────────────────── -->
   <div id="pipeline-container">
     <svg id="pipeline-svg" viewBox="0 0 1200 300" preserveAspectRatio="xMidYMid meet"></svg>
+
+    <!-- Machine detail panel (overlay, opened by clicking a machine) -->
+    <aside id="machine-detail" hidden aria-live="polite">
+      <header class="md-header">
+        <div class="md-title">
+          <span class="md-id" id="md-id">M1</span>
+          <span class="md-name" id="md-name">Machine name</span>
+          <span class="md-bottleneck" id="md-bottleneck" hidden>Engpass</span>
+        </div>
+        <button class="md-close" id="md-close" aria-label="Close detail panel">&times;</button>
+      </header>
+
+      <div class="md-state-row">
+        <span class="state-badge" id="md-state">IDLE</span>
+        <span class="md-current-part">Current part: <strong id="md-part">—</strong></span>
+      </div>
+
+      <div class="md-cycle">
+        <div class="md-cycle-label">
+          <span>Cycle progress</span>
+          <span id="md-cycle-text">0 / 0 ticks</span>
+        </div>
+        <div class="md-cycle-bar"><div class="md-cycle-fill" id="md-cycle-fill"></div></div>
+      </div>
+
+      <div class="md-stats">
+        <div class="md-stat">
+          <div class="md-stat-label">Utilization</div>
+          <div class="md-stat-value" id="md-util">0%</div>
+        </div>
+        <div class="md-stat">
+          <div class="md-stat-label">Parts processed</div>
+          <div class="md-stat-value" id="md-processed">0</div>
+        </div>
+        <div class="md-stat">
+          <div class="md-stat-label">Avg queue wait</div>
+          <div class="md-stat-value" id="md-wait">0 ticks</div>
+        </div>
+        <div class="md-stat" id="md-reject-stat" hidden>
+          <div class="md-stat-label">Reject rate</div>
+          <div class="md-stat-value" id="md-reject">0%</div>
+        </div>
+      </div>
+
+      <div class="md-breakdown">
+        <div class="md-cycle-label">
+          <span>Time breakdown</span>
+          <span id="md-total-ticks">0 ticks</span>
+        </div>
+        <div class="md-stack" id="md-stack">
+          <div class="md-stack-seg md-seg-processing"></div>
+          <div class="md-stack-seg md-seg-blocked"></div>
+          <div class="md-stack-seg md-seg-starved"></div>
+          <div class="md-stack-seg md-seg-idle"></div>
+        </div>
+        <div class="md-legend">
+          <span><span class="dot dot-processing"></span>Processing <strong id="md-pct-processing">0%</strong></span>
+          <span><span class="dot dot-blocked"></span>Blocked <strong id="md-pct-blocked">0%</strong></span>
+          <span><span class="dot dot-starved"></span>Starved <strong id="md-pct-starved">0%</strong></span>
+          <span><span class="dot dot-idle"></span>Idle <strong id="md-pct-idle">0%</strong></span>
+        </div>
+      </div>
+    </aside>
   </div>
 
   <!-- ── Controls ────────────────────────────────────────────────────────── -->
