@@ -37,6 +37,104 @@ const LAYOUT = {
   SCRAP:  560,  // x of scrap box (below M2 fork)
 };
 
+// ── Connector geometry (resolved at buildPipeline time) ───────────────────
+// For each pipe along which particles can travel: how to compute the
+// (x, y) coordinate of a particle at parametric position t in [0, 1].
+// Also: the buffer (if any) whose fullness causes particles to jam here.
+
+const CONNECTORS = [
+  { id: 'conn-src-b0',  destBufferId: 'BUF0' },
+  { id: 'conn-b0-m1',   destBufferId: null   },  // dest is machine; never jams
+  { id: 'conn-m1-b1',   destBufferId: 'BUF1' },
+  { id: 'conn-b1-m2',   destBufferId: null   },
+  { id: 'conn-m2-b2',   destBufferId: 'BUF2' },
+  { id: 'conn-b2-m3',   destBufferId: null   },
+  { id: 'conn-m3-b3',   destBufferId: 'BUF3' },
+  { id: 'conn-b3-m4',   destBufferId: null   },
+  { id: 'conn-m4-sink', destBufferId: null   },  // sink unbounded
+  { id: 'conn-m2-scrap',destBufferId: null   },  // scrap unbounded
+];
+
+// Filled by cacheConnectorGeometry(); { connectorId -> (t) => {x, y} }
+const connectorPointAt = {};
+// Filled by cacheConnectorGeometry(); { connectorId -> totalLength (px) }
+const connectorLength = {};
+
+function cacheConnectorGeometry() {
+  for (const { id } of CONNECTORS) {
+    const node = document.getElementById(id);
+    if (!node) continue;
+
+    if (node.tagName === 'line') {
+      const x1 = parseFloat(node.getAttribute('x1'));
+      const y1 = parseFloat(node.getAttribute('y1'));
+      const x2 = parseFloat(node.getAttribute('x2'));
+      const y2 = parseFloat(node.getAttribute('y2'));
+      const len = Math.hypot(x2 - x1, y2 - y1);
+      connectorLength[id] = len;
+      connectorPointAt[id] = (t) => ({
+        x: x1 + (x2 - x1) * t,
+        y: y1 + (y2 - y1) * t,
+      });
+    } else {
+      // SVG <path> — used for the scrap branch (L-shaped)
+      const len = node.getTotalLength();
+      connectorLength[id] = len;
+      connectorPointAt[id] = (t) => {
+        const p = node.getPointAtLength(len * t);
+        return { x: p.x, y: p.y };
+      };
+    }
+  }
+}
+
+// ── Transfer detection (pure: prev/next state -> particle spawn events) ──
+// Each event: { connectorId, kind: 'good'|'scrap', count }
+
+function detectTransfers(prev, next) {
+  if (!prev || !next) return [];
+  const events = [];
+
+  const bufBy = (state, id) =>
+    state.buffers.find(b => b.id === id) ?? { totalPartsOut: 0, load: 0, capacity: 0 };
+  const machBy = (state, id) =>
+    state.machines.find(m => m.id === id) ?? { partsProcessed: 0 };
+
+  // Source -> BUF0
+  const srcDelta = next.source.totalGenerated - prev.source.totalGenerated;
+  if (srcDelta > 0) events.push({ connectorId: 'conn-src-b0', kind: 'good', count: srcDelta });
+
+  // Buffer pulls (cumulative totalPartsOut)
+  const bufPulls = [
+    ['BUF0', 'conn-b0-m1'],
+    ['BUF1', 'conn-b1-m2'],
+    ['BUF2', 'conn-b2-m3'],
+    ['BUF3', 'conn-b3-m4'],
+  ];
+  for (const [bufId, connId] of bufPulls) {
+    const d = bufBy(next, bufId).totalPartsOut - bufBy(prev, bufId).totalPartsOut;
+    if (d > 0) events.push({ connectorId: connId, kind: 'good', count: d });
+  }
+
+  // Machine outputs
+  const m1d = machBy(next, 'M1').partsProcessed - machBy(prev, 'M1').partsProcessed;
+  if (m1d > 0) events.push({ connectorId: 'conn-m1-b1', kind: 'good', count: m1d });
+
+  const m2d  = machBy(next, 'M2').partsProcessed - machBy(prev, 'M2').partsProcessed;
+  const m2sd = next.scrap.partsReceived - prev.scrap.partsReceived;
+  if (m2sd > 0)            events.push({ connectorId: 'conn-m2-scrap', kind: 'scrap', count: m2sd });
+  const m2good = Math.max(0, m2d - m2sd);
+  if (m2good > 0)          events.push({ connectorId: 'conn-m2-b2', kind: 'good', count: m2good });
+
+  const m3d = machBy(next, 'M3').partsProcessed - machBy(prev, 'M3').partsProcessed;
+  if (m3d > 0) events.push({ connectorId: 'conn-m3-b3', kind: 'good', count: m3d });
+
+  const m4d = machBy(next, 'M4').partsProcessed - machBy(prev, 'M4').partsProcessed;
+  if (m4d > 0) events.push({ connectorId: 'conn-m4-sink', kind: 'good', count: m4d });
+
+  return events;
+}
+
 // ── Status descriptions (short, human-readable) ──────────────────────────────
 const STATE_DESCRIPTION = {
   PROCESSING: 'Bearbeitet',
@@ -49,6 +147,7 @@ const STATE_DESCRIPTION = {
 
 let lastState   = null;
 let lastMetrics = null;
+let prevStateForDiff = null;
 let selectedMachineId = null;   // null = panel closed; otherwise 'M1'..'M4'
 
 const sparklineData = [];   // rolling window of throughput values
@@ -128,6 +227,8 @@ function buildPipeline() {
     filter: 'url(#part-glow)',
   });
   svg.appendChild(particleLayer);
+
+  cacheConnectorGeometry();
 
   // ── Source ─────────────────────────────────────────────────────────────────
   drawSource();
@@ -779,6 +880,13 @@ function connectSSE() {
     const { state, metrics } = JSON.parse(e.data);
     lastState   = state;
     lastMetrics = metrics;
+
+    // Particle flow: detect transfers between consecutive state snapshots
+    const transfers = detectTransfers(prevStateForDiff, state);
+    if (transfers.length > 0) {
+      console.debug('[transfers]', transfers);
+    }
+    prevStateForDiff = state;
 
     if (!slidersBuilt && state.machines) {
       buildControlSliders(state);
