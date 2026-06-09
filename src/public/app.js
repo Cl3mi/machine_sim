@@ -232,6 +232,11 @@ function buildPipeline() {
 
   cacheConnectorGeometry();
 
+  particlePool = [];   // particle <circle>s lived inside #particle-layer
+  particles    = [];
+  ensureParticleNodes(32);
+  startParticleLoop();
+
   // ── Source ─────────────────────────────────────────────────────────────────
   drawSource();
 
@@ -743,6 +748,103 @@ function drawSparkline() {
   ctx.fill();
 }
 
+// ── Particle engine ───────────────────────────────────────────────────────
+// In-flight particles travelling between stations. Driven by rAF.
+
+const PARTICLE_DURATION_MS = 400;   // travel time at 1× sim speed
+const PARTICLE_RADIUS      = 3.5;
+const POOL_GROWTH          = 16;
+
+let particlePool = [];      // { node: <circle>, inUse: boolean }
+let particles    = [];      // active Particle objects
+let lastFrameTs  = 0;
+let rafHandle    = null;
+
+function ensureParticleNodes(n) {
+  while (particlePool.length < n) {
+    const c = el('circle', { r: PARTICLE_RADIUS, class: 'particle hidden' });
+    document.getElementById('particle-layer').appendChild(c);
+    particlePool.push({ node: c, inUse: false });
+  }
+}
+
+function acquireParticleNode() {
+  for (const slot of particlePool) {
+    if (!slot.inUse) { slot.inUse = true; slot.node.classList.remove('hidden'); return slot; }
+  }
+  ensureParticleNodes(particlePool.length + POOL_GROWTH);
+  return acquireParticleNode();
+}
+
+function releaseParticleNode(slot) {
+  slot.inUse = false;
+  slot.node.classList.add('hidden');
+}
+
+function spawnParticle({ connectorId, kind, delayMs = 0 }) {
+  if (!connectorPointAt[connectorId]) return;
+  const slot = acquireParticleNode();
+  if (kind === 'scrap') slot.node.classList.add('scrap');
+  else                  slot.node.classList.remove('scrap');
+
+  const now = performance.now();
+  particles.push({
+    slot,
+    connectorId,
+    kind,
+    startedAt: now + delayMs,
+    duration:  PARTICLE_DURATION_MS,
+  });
+}
+
+function spawnFromEvents(events) {
+  for (const ev of events) {
+    for (let i = 0; i < ev.count; i++) {
+      spawnParticle({
+        connectorId: ev.connectorId,
+        kind: ev.kind,
+        delayMs: i * 80,    // stagger when multiple in one frame
+      });
+    }
+  }
+}
+
+function advanceParticles(now) {
+  if (particles.length === 0) return;
+
+  // Iterate backwards so we can splice retired particles cheaply.
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p   = particles[i];
+    const raw = (now - p.startedAt) / p.duration;
+    const t   = Math.max(0, Math.min(1, raw));
+
+    const fn = connectorPointAt[p.connectorId];
+    if (!fn) { releaseParticleNode(p.slot); particles.splice(i, 1); continue; }
+
+    const pt = fn(t);
+    p.slot.node.setAttribute('cx', pt.x.toFixed(2));
+    p.slot.node.setAttribute('cy', pt.y.toFixed(2));
+
+    if (raw >= 1) { releaseParticleNode(p.slot); particles.splice(i, 1); }
+  }
+}
+
+function particleLoop(ts) {
+  lastFrameTs = ts;
+  advanceParticles(ts);
+  rafHandle = requestAnimationFrame(particleLoop);
+}
+
+function startParticleLoop() {
+  if (rafHandle != null) return;
+  rafHandle = requestAnimationFrame(particleLoop);
+}
+
+function resetParticles() {
+  for (const p of particles) releaseParticleNode(p.slot);
+  particles = [];
+}
+
 // ── Control panel ─────────────────────────────────────────────────────────────
 
 function buildControlSliders(state) {
@@ -885,9 +987,7 @@ function connectSSE() {
 
     // Particle flow: detect transfers between consecutive state snapshots
     const transfers = detectTransfers(prevStateForDiff, state);
-    if (transfers.length > 0) {
-      console.debug('[transfers]', transfers);
-    }
+    if (transfers.length > 0) spawnFromEvents(transfers);
     prevStateForDiff = state;
 
     if (!slidersBuilt && state.machines) {

@@ -593,3 +593,12 @@ g[id^="elem-M"]:hover .machine-rect:not(.selected):not(.bottleneck) {
 .buf-slot-full  { fill: #6366f1; stroke: #818cf8; stroke-width: 1; }
 .buf-slot-full.warn  { fill: #b45309; stroke: #f59e0b; }
 .buf-slot-full.alert { fill: #991b1b; stroke: #ef4444; }
+
+/* ── Flowing material particles ─────────────────────────────────────────── */
+
+.particle {
+  fill: var(--accent);
+  pointer-events: none;
+}
+.particle.scrap { fill: var(--blocked); }
+.particle.hidden { visibility: hidden; }
