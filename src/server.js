@@ -71,18 +71,23 @@ function readSidCookie(req) {
   return m ? m[1] : null;
 }
 
-function ensureSid(req, reply) {
+// ── Create Fastify instance ────────────────────────────────────────────────
+
+const app = Fastify({ logger: false });
+
+// Stamp every response with an `sid` cookie if absent — including the initial
+// HTML page load. Without this, the browser would hit /api/events before any
+// cookie exists, and subsequent /api/control fetches would land on a different
+// session than the one tied to the SSE stream.
+app.addHook('onRequest', (req, reply, done) => {
   let sid = readSidCookie(req);
   if (!sid) {
     sid = randomUUID();
     reply.header('Set-Cookie', `sid=${sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`);
   }
-  return sid;
-}
-
-// ── Create Fastify instance ────────────────────────────────────────────────
-
-const app = Fastify({ logger: false });
+  req.sid = sid;
+  done();
+});
 
 app.register(fastifyStatic, {
   root:   join(__dirname, 'public'),
@@ -107,40 +112,38 @@ setInterval(() => {
 
 // SSE stream
 app.get('/api/events', (req, reply) => {
-  const sid = ensureSid(req, reply);
-  const session = getSession(sid);
+  const session = getSession(req.sid);
 
-  reply.raw.writeHead(200, {
+  // Forward any Set-Cookie the onRequest hook queued, since reply.raw.writeHead
+  // bypasses Fastify's normal header flush.
+  const setCookie = reply.getHeader('set-cookie');
+  const headers = {
     'Content-Type':  'text/event-stream',
     'Cache-Control': 'no-cache',
     'Connection':    'keep-alive',
     'X-Accel-Buffering': 'no',
-  });
+  };
+  if (setCookie) headers['Set-Cookie'] = setCookie;
+
+  reply.raw.writeHead(200, headers);
   reply.raw.write(':\n\n');
   session.sseClients.add(reply);
 
   req.raw.on('close', () => {
     session.sseClients.delete(reply);
-    scheduleCleanup(sid);
+    scheduleCleanup(req.sid);
   });
 });
 
 // Current state (JSON)
-app.get('/api/state', async (req, reply) => {
-  const sid = ensureSid(req, reply);
-  return getSession(sid).engine.getState();
-});
+app.get('/api/state', async (req) => getSession(req.sid).engine.getState());
 
 // Computed metrics (JSON)
-app.get('/api/metrics', async (req, reply) => {
-  const sid = ensureSid(req, reply);
-  return calculateMetrics(getSession(sid).engine.getState());
-});
+app.get('/api/metrics', async (req) => calculateMetrics(getSession(req.sid).engine.getState()));
 
 // Control endpoint
-app.post('/api/control', async (req, reply) => {
-  const sid = ensureSid(req, reply);
-  const { engine } = getSession(sid);
+app.post('/api/control', async (req) => {
+  const { engine } = getSession(req.sid);
   const { action, params = {} } = req.body ?? {};
 
   switch (action) {
@@ -161,7 +164,7 @@ app.post('/api/control', async (req, reply) => {
 
 // Prometheus scrape endpoint — reports against the first active session
 // if one exists, otherwise an empty default state. (Grafana is unused.)
-app.get('/metrics', async (req, reply) => {
+app.get('/metrics', async (_req, reply) => {
   const first = sessions.values().next().value;
   const state = first
     ? first.engine.getState()
