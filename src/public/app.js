@@ -754,6 +754,7 @@ function drawSparkline() {
 const PARTICLE_DURATION_MS = 400;   // travel time at 1× sim speed
 const PARTICLE_RADIUS      = 3.5;
 const POOL_GROWTH          = 16;
+const POOL_MAX_SIZE        = 256;
 
 let particlePool = [];      // { node: <circle>, inUse: boolean }
 let particles    = [];      // active Particle objects
@@ -761,9 +762,10 @@ let lastFrameTs  = 0;
 let rafHandle    = null;
 
 function ensureParticleNodes(n) {
+  const layer = document.getElementById('particle-layer');
   while (particlePool.length < n) {
     const c = el('circle', { r: PARTICLE_RADIUS, class: 'particle hidden' });
-    document.getElementById('particle-layer').appendChild(c);
+    layer.appendChild(c);
     particlePool.push({ node: c, inUse: false });
   }
 }
@@ -772,7 +774,8 @@ function acquireParticleNode() {
   for (const slot of particlePool) {
     if (!slot.inUse) { slot.inUse = true; slot.node.classList.remove('hidden'); return slot; }
   }
-  ensureParticleNodes(particlePool.length + POOL_GROWTH);
+  if (particlePool.length >= POOL_MAX_SIZE) return null;
+  ensureParticleNodes(Math.min(POOL_MAX_SIZE, particlePool.length + POOL_GROWTH));
   return acquireParticleNode();
 }
 
@@ -784,6 +787,7 @@ function releaseParticleNode(slot) {
 function spawnParticle({ connectorId, kind, delayMs = 0 }) {
   if (!connectorPointAt[connectorId]) return;
   const slot = acquireParticleNode();
+  if (!slot) return;   // pool exhausted; drop this spawn
   if (kind === 'scrap') slot.node.classList.add('scrap');
   else                  slot.node.classList.remove('scrap');
 
