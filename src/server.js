@@ -3,6 +3,10 @@
  * Fastify HTTP server — glues together the simulation engine, metrics, and
  * the static frontend. Entry point for the application.
  *
+ * Each browser gets its own SimulationEngine, keyed by a `sid` cookie.
+ * When a session's last SSE client disconnects, the engine is kept alive
+ * for SESSION_TTL_MS to survive page reloads, then paused and discarded.
+ *
  * Routes:
  *   GET  /              → serves index.html (the visual frontend)
  *   GET  /api/state     → current simulation state (JSON)
@@ -16,6 +20,7 @@ import Fastify        from 'fastify';
 import fastifyStatic  from '@fastify/static';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { randomUUID } from 'crypto';
 
 import { SimulationEngine } from './simulation/engine.js';
 import { DEFAULT_CONFIG }   from './simulation/config.js';
@@ -25,70 +30,123 @@ import { updateMetrics, register } from './metrics/prometheus.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT      = parseInt(process.env.PORT ?? '3000', 10);
 
-// ── Bootstrap simulation ───────────────────────────────────────────────────
+// Grace period before a session with no clients is torn down.
+const SESSION_TTL_MS = 30_000;
 
-const engine = new SimulationEngine(DEFAULT_CONFIG);
-engine.play(); // auto-start so students see motion immediately on page load
+// ── Per-session engine registry ───────────────────────────────────────────
+
+// sid -> { engine, sseClients: Set<res>, cleanupTimer: Timeout|null }
+const sessions = new Map();
+
+function getSession(sid) {
+  let s = sessions.get(sid);
+  if (!s) {
+    const engine = new SimulationEngine(DEFAULT_CONFIG);
+    engine.play();
+    s = { engine, sseClients: new Set(), cleanupTimer: null };
+    sessions.set(sid, s);
+  }
+  if (s.cleanupTimer) {
+    clearTimeout(s.cleanupTimer);
+    s.cleanupTimer = null;
+  }
+  return s;
+}
+
+function scheduleCleanup(sid) {
+  const s = sessions.get(sid);
+  if (!s || s.sseClients.size > 0 || s.cleanupTimer) return;
+  s.cleanupTimer = setTimeout(() => {
+    s.engine.pause();
+    sessions.delete(sid);
+  }, SESSION_TTL_MS);
+}
+
+// ── Session cookie ────────────────────────────────────────────────────────
+
+function readSidCookie(req) {
+  const raw = req.headers.cookie;
+  if (!raw) return null;
+  const m = raw.match(/(?:^|;\s*)sid=([^;]+)/);
+  return m ? m[1] : null;
+}
+
+function ensureSid(req, reply) {
+  let sid = readSidCookie(req);
+  if (!sid) {
+    sid = randomUUID();
+    reply.header('Set-Cookie', `sid=${sid}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`);
+  }
+  return sid;
+}
 
 // ── Create Fastify instance ────────────────────────────────────────────────
 
 const app = Fastify({ logger: false });
 
-// Serve files from src/public/ as static assets
 app.register(fastifyStatic, {
   root:   join(__dirname, 'public'),
   prefix: '/',
 });
 
-// ── SSE helpers ───────────────────────────────────────────────────────────
-
-// Active SSE connections — we push to all of them every 500 ms
-const sseClients = new Set();
+// ── SSE broadcast loop ─────────────────────────────────────────────────────
 
 setInterval(() => {
-  if (sseClients.size === 0) return;
-  const state   = engine.getState();
-  const metrics = calculateMetrics(state);
-  const payload = JSON.stringify({ state, metrics });
-  const line    = `data: ${payload}\n\n`;
-  for (const res of sseClients) {
-    try { res.raw.write(line); } catch (_) { sseClients.delete(res); }
+  for (const s of sessions.values()) {
+    if (s.sseClients.size === 0) continue;
+    const state   = s.engine.getState();
+    const metrics = calculateMetrics(state);
+    const line    = `data: ${JSON.stringify({ state, metrics })}\n\n`;
+    for (const res of s.sseClients) {
+      try { res.raw.write(line); } catch (_) { s.sseClients.delete(res); }
+    }
   }
 }, 500);
 
 // ── Routes ─────────────────────────────────────────────────────────────────
 
 // SSE stream
-app.get('/api/events', (req, res) => {
-  res.raw.writeHead(200, {
+app.get('/api/events', (req, reply) => {
+  const sid = ensureSid(req, reply);
+  const session = getSession(sid);
+
+  reply.raw.writeHead(200, {
     'Content-Type':  'text/event-stream',
     'Cache-Control': 'no-cache',
     'Connection':    'keep-alive',
-    'X-Accel-Buffering': 'no', // disable nginx buffering if behind a proxy
+    'X-Accel-Buffering': 'no',
   });
-  res.raw.write(':\n\n'); // initial keep-alive comment
-  sseClients.add(res);
+  reply.raw.write(':\n\n');
+  session.sseClients.add(reply);
 
-  req.raw.on('close', () => sseClients.delete(res));
+  req.raw.on('close', () => {
+    session.sseClients.delete(reply);
+    scheduleCleanup(sid);
+  });
 });
 
 // Current state (JSON)
-app.get('/api/state', async () => engine.getState());
+app.get('/api/state', async (req, reply) => {
+  const sid = ensureSid(req, reply);
+  return getSession(sid).engine.getState();
+});
 
 // Computed metrics (JSON)
-app.get('/api/metrics', async () => {
-  const state = engine.getState();
-  return calculateMetrics(state);
+app.get('/api/metrics', async (req, reply) => {
+  const sid = ensureSid(req, reply);
+  return calculateMetrics(getSession(sid).engine.getState());
 });
 
 // Control endpoint
-app.post('/api/control', async (req, res) => {
+app.post('/api/control', async (req, reply) => {
+  const sid = ensureSid(req, reply);
+  const { engine } = getSession(sid);
   const { action, params = {} } = req.body ?? {};
 
   switch (action) {
-    case 'play':           engine.play();           break;
-    case 'pause':          engine.pause();          break;
-    case 'reset':          engine.reset();          break;
+    case 'play':            engine.play();            break;
+    case 'pause':           engine.pause();           break;
+    case 'reset':           engine.reset();           break;
     case 'resetToDefaults': engine.resetToDefaults(); break;
     default:
       // No recognised action — may still have params to update
@@ -101,11 +159,15 @@ app.post('/api/control', async (req, res) => {
   return { ok: true, tick: engine.tick };
 });
 
-// Prometheus scrape endpoint
-app.get('/metrics', async (req, res) => {
-  const state = engine.getState();
+// Prometheus scrape endpoint — reports against the first active session
+// if one exists, otherwise an empty default state. (Grafana is unused.)
+app.get('/metrics', async (req, reply) => {
+  const first = sessions.values().next().value;
+  const state = first
+    ? first.engine.getState()
+    : new SimulationEngine(DEFAULT_CONFIG).getState();
   updateMetrics(state);
-  res.header('Content-Type', register.contentType);
+  reply.header('Content-Type', register.contentType);
   return register.metrics();
 });
 
