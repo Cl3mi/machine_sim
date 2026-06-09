@@ -483,6 +483,15 @@ g[id^="elem-M"]:hover .machine-rect:not(.selected):not(.bottleneck) {
   gap: 8px;
   font-size: 0.78rem;
 }
+.md-state-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.state-desc {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+}
 .md-current-part { color: var(--text-dim); }
 .md-current-part strong { color: var(--text); }
 

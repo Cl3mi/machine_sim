@@ -37,6 +37,14 @@ const LAYOUT = {
   SCRAP:  560,  // x of scrap box (below M2 fork)
 };
 
+// ── Status descriptions (short, human-readable) ──────────────────────────────
+const STATE_DESCRIPTION = {
+  PROCESSING: 'Bearbeitet',
+  IDLE:       'Leerlauf',
+  STARVED:    'Ausgehungert',
+  BLOCKED:    'Blockiert',
+};
+
 // ── State ────────────────────────────────────────────────────────────────────
 
 let lastState   = null;
@@ -497,6 +505,7 @@ function updateMachineDetail() {
     stateEl.textContent = m.state;
     stateEl.className   = `state-badge state-${m.state}`;
   }
+  setTextContent('md-state-desc', STATE_DESCRIPTION[m.state] ?? '');
 
   setTextContent('md-part', m.currentPartId != null ? `#${m.currentPartId}` : '—');
 
@@ -587,7 +596,7 @@ function updateMetricsDashboard(metrics, state) {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><strong>${m.id}</strong> — ${m.name}${m.bottleneck ? '<span class="bottleneck-badge">Engpass</span>' : ''}</td>
-      <td><span class="state-badge state-${m.currentState}">${m.currentState}</span></td>
+      <td><span class="state-badge state-${m.currentState}">${m.currentState}</span> <span class="state-desc">${STATE_DESCRIPTION[m.currentState] ?? ''}</span></td>
       <td>${(m.utilization * 100).toFixed(1)}%</td>
       <td>${m.avgQueueWait.toFixed(1)} ticks</td>
       <td>${m.blockedTime} ticks</td>
