@@ -756,6 +756,7 @@ const PARTICLE_RADIUS      = 3.5;
 const POOL_GROWTH          = 16;
 const POOL_MAX_SIZE        = 256;
 
+let particleSimState = null;   // latest server snapshot, used for jam checks
 let particlePool = [];      // { node: <circle>, inUse: boolean }
 let particles    = [];      // active Particle objects
 let lastFrameTs  = 0;
@@ -782,6 +783,15 @@ function acquireParticleNode() {
 function releaseParticleNode(slot) {
   slot.inUse = false;
   slot.node.classList.add('hidden');
+}
+
+function isDestBufferFull(connectorId) {
+  if (!particleSimState) return false;
+  const conn = CONNECTORS.find(c => c.id === connectorId);
+  if (!conn || !conn.destBufferId) return false;
+  const buf = particleSimState.buffers.find(b => b.id === conn.destBufferId);
+  if (!buf) return false;
+  return buf.load >= buf.capacity;
 }
 
 function spawnParticle({ connectorId, kind, delayMs = 0 }) {
@@ -816,20 +826,42 @@ function spawnFromEvents(events) {
 function advanceParticles(now) {
   if (particles.length === 0) return;
 
-  // Iterate backwards so we can splice retired particles cheaply.
-  for (let i = particles.length - 1; i >= 0; i--) {
+  // Group jammed particles per-connector so we can assign stack indexes.
+  const jamStackCounters = {};   // connectorId -> next stackIndex
+
+  // Walk in spawn order (oldest first) so older particles sit deeper
+  // into the jam (closer to the buffer wall).
+  for (let i = 0; i < particles.length; i++) {
     const p   = particles[i];
     const raw = (now - p.startedAt) / p.duration;
-    const t   = Math.max(0, Math.min(1, raw));
+    let   t   = Math.max(0, Math.min(1, raw));
+
+    const blocked = isDestBufferFull(p.connectorId);
+    if (blocked && t > 0.85) {
+      const idx = jamStackCounters[p.connectorId] ?? 0;
+      jamStackCounters[p.connectorId] = idx + 1;
+      // Older particles get smaller idx -> sit closer to the buffer.
+      t = Math.max(0.55, 0.85 - idx * 0.06);
+      p.jammed = true;
+    } else {
+      p.jammed = false;
+    }
 
     const fn = connectorPointAt[p.connectorId];
-    if (!fn) { releaseParticleNode(p.slot); particles.splice(i, 1); continue; }
-
+    if (!fn) continue;
     const pt = fn(t);
     p.slot.node.setAttribute('cx', pt.x.toFixed(2));
     p.slot.node.setAttribute('cy', pt.y.toFixed(2));
+  }
 
-    if (raw >= 1) { releaseParticleNode(p.slot); particles.splice(i, 1); }
+  // Retire un-jammed particles that finished traveling.
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p   = particles[i];
+    const raw = (performance.now() - p.startedAt) / p.duration;
+    if (!p.jammed && raw >= 1) {
+      releaseParticleNode(p.slot);
+      particles.splice(i, 1);
+    }
   }
 }
 
@@ -993,6 +1025,7 @@ function connectSSE() {
     const transfers = detectTransfers(prevStateForDiff, state);
     if (transfers.length > 0) spawnFromEvents(transfers);
     prevStateForDiff = state;
+    particleSimState = state;
 
     if (!slidersBuilt && state.machines) {
       buildControlSliders(state);
