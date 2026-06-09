@@ -162,6 +162,43 @@ app.post('/api/control', async (req) => {
   return { ok: true, tick: engine.tick };
 });
 
+// Per-tick history export — CSV or JSON download of every simulation step
+// recorded since the last reset. Format defaults to JSON.
+app.get('/api/export', async (req, reply) => {
+  const { engine } = getSession(req.sid);
+  const history    = engine.getHistory();
+  const format     = (req.query?.format ?? 'json').toLowerCase();
+  const stamp      = new Date().toISOString().replace(/[:.]/g, '-');
+
+  if (format === 'csv') {
+    const csv = historyToCsv(history);
+    reply
+      .header('Content-Type', 'text/csv; charset=utf-8')
+      .header('Content-Disposition', `attachment; filename="plantsim-${stamp}.csv"`);
+    return csv;
+  }
+
+  reply
+    .header('Content-Type', 'application/json; charset=utf-8')
+    .header('Content-Disposition', `attachment; filename="plantsim-${stamp}.json"`);
+  return history;
+});
+
+function historyToCsv(rows) {
+  if (rows.length === 0) return '';
+  const columns = Object.keys(rows[0]);
+  const escape = (v) => {
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [columns.join(',')];
+  for (const row of rows) {
+    lines.push(columns.map(c => escape(row[c])).join(','));
+  }
+  return lines.join('\n') + '\n';
+}
+
 // Prometheus scrape endpoint — reports against the first active session
 // if one exists, otherwise an empty default state. (Grafana is unused.)
 app.get('/metrics', async (_req, reply) => {

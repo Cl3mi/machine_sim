@@ -733,6 +733,19 @@ async function applyReset(action) {
 document.getElementById('btn-reset').addEventListener('click', () => applyReset('reset'));
 document.getElementById('btn-reset-defaults').addEventListener('click', () => applyReset('resetToDefaults'));
 
+// Export per-tick history. The browser keeps our session cookie on the
+// navigation, so the server returns this session's recorded history.
+function downloadExport(format) {
+  const a = document.createElement('a');
+  a.href = `/api/export?format=${format}`;
+  a.rel  = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+document.getElementById('btn-export-csv').addEventListener('click', () => downloadExport('csv'));
+document.getElementById('btn-export-json').addEventListener('click', () => downloadExport('json'));
+
 // Speed buttons
 document.querySelectorAll('.speed-btn').forEach(btn => {
   btn.addEventListener('click', () => {

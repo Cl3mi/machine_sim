@@ -117,6 +117,13 @@ export class SimulationEngine extends EventEmitter {
     }
   }
 
+  // Returns the per-tick history recorded since the last reset.
+  // Each entry is a flat object — one row per simulated tick — suitable for
+  // direct CSV/JSON export.
+  getHistory() {
+    return this._history;
+  }
+
   // Returns a plain JSON-serialisable snapshot of the current state
   getState() {
     return {
@@ -170,6 +177,7 @@ export class SimulationEngine extends EventEmitter {
 
   _reset() {
     this.tick = 0;
+    this._history = [];
 
     const cfg = this._config;
 
@@ -257,6 +265,8 @@ export class SimulationEngine extends EventEmitter {
       }
     }
 
+    this._recordHistory();
+
     this.emit('tick', this.getState());
 
     // ── STEP 5: Auto-pause when all materials are done ───────────────────────
@@ -271,6 +281,41 @@ export class SimulationEngine extends EventEmitter {
         this.emit('simulation-complete', this.getState());
       }
     }
+  }
+
+  // ── Private: append a flat snapshot for this tick to the history buffer ───
+  //
+  // Rolling cap of 100k rows keeps long infinite-stock runs from leaking
+  // unbounded memory; the oldest tick is dropped once the cap is hit.
+
+  _recordHistory() {
+    const row = {
+      tick: this.tick,
+      sourceTotalGenerated: this.source.totalGenerated,
+      sourceMaterialStock:  this.source.materialStock,
+    };
+
+    for (const m of this.machines) {
+      const id = m.id;
+      row[`${id}_state`]            = m.state;
+      row[`${id}_partsProcessed`]   = m.partsProcessed;
+      row[`${id}_ticksProcessing`]  = m.ticksProcessing;
+      row[`${id}_ticksBlocked`]     = m.ticksBlocked;
+      row[`${id}_ticksStarved`]     = m.ticksStarved;
+      row[`${id}_ticksIdle`]        = m.ticksIdle;
+      row[`${id}_currentPartId`]    = m.currentPart?.id ?? '';
+    }
+
+    for (const b of this.buffers) {
+      row[`${b.id}_load`]     = b.parts.length;
+      row[`${b.id}_capacity`] = b.capacity;
+    }
+
+    row.sinkPartsReceived  = this.sink.partsReceived;
+    row.scrapPartsReceived = this.scrapSink.partsReceived;
+
+    this._history.push(row);
+    if (this._history.length > 100_000) this._history.shift();
   }
 
   // ── Private: advance one machine for this tick ────────────────────────────
