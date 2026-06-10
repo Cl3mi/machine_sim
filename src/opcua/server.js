@@ -25,10 +25,14 @@ export async function startOpcUaServer(engine) {
   await server.initialize();
 
   const vars = _buildAddressSpace(server.engine.addressSpace, engine.getState());
-  engine.on('tick', (state) => _updateNodes(vars, state));
 
   await server.start();
   console.log(`OPC-UA TCP listening on opc.tcp://127.0.0.1:${TCP_PORT}`);
+
+  const onTick = (state) => _updateNodes(vars, state);
+  engine.on('tick', onTick);
+  server.on('shutdown', () => engine.off('tick', onTick));
+
   return server;
 }
 
