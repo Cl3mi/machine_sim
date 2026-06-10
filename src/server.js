@@ -220,7 +220,9 @@ try {
   console.log(`PlantSim PoC running at http://0.0.0.0:${PORT}`);
 
   const opcuaTcpPort = parseInt(process.env.OPCUA_TCP_PORT ?? '4840');
-  await startOpcUaServer(engine);
+  const opcuaEngine = new SimulationEngine(DEFAULT_CONFIG);
+  opcuaEngine.play();
+  await startOpcUaServer(opcuaEngine);
   attachOpcUaBridge(app.server, opcuaTcpPort);
 
   const endpointUrl = process.env.OPCUA_ENDPOINT_URL ?? `ws://localhost:${PORT}/opcua`;
