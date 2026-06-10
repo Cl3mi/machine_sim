@@ -26,6 +26,8 @@ import { SimulationEngine } from './simulation/engine.js';
 import { DEFAULT_CONFIG }   from './simulation/config.js';
 import { calculateMetrics } from './metrics/collector.js';
 import { updateMetrics, register } from './metrics/prometheus.js';
+import { startOpcUaServer } from './opcua/server.js';
+import { attachOpcUaBridge } from './opcua/bridge.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT      = parseInt(process.env.PORT ?? '3000', 10);
@@ -216,6 +218,13 @@ app.get('/metrics', async (_req, reply) => {
 try {
   await app.listen({ port: PORT, host: '0.0.0.0' });
   console.log(`PlantSim PoC running at http://0.0.0.0:${PORT}`);
+
+  const opcuaTcpPort = parseInt(process.env.OPCUA_TCP_PORT ?? '4840');
+  await startOpcUaServer(engine);
+  attachOpcUaBridge(app.server, opcuaTcpPort);
+
+  const endpointUrl = process.env.OPCUA_ENDPOINT_URL ?? `ws://localhost:${PORT}/opcua`;
+  console.log(`OPC-UA WS endpoint: ${endpointUrl}`);
 } catch (err) {
   console.error(err);
   process.exit(1);
