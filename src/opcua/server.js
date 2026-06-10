@@ -87,6 +87,7 @@ function _updateNodes(vars, state) {
     const mv = vars.machines[m.id];
     if (!mv) continue;
     mv.state.setValueFromSource(new Variant({ dataType: DataType.String,  value: m.state }));
+    mv.cycleTime.setValueFromSource(new Variant({ dataType: DataType.UInt32, value: m.cycleTime }));
     mv.partsProcessed.setValueFromSource(new Variant({ dataType: DataType.UInt32, value: m.partsProcessed }));
     mv.ticksProcessing.setValueFromSource(new Variant({ dataType: DataType.UInt32, value: m.ticksProcessing }));
     mv.ticksBlocked.setValueFromSource(new Variant({ dataType: DataType.UInt32, value: m.ticksBlocked }));
