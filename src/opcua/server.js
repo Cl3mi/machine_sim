@@ -31,7 +31,9 @@ export async function startOpcUaServer(engine) {
 
   const onTick = (state) => _updateNodes(vars, state);
   engine.on('tick', onTick);
-  server.on('shutdown', () => engine.off('tick', onTick));
+  const cleanup = () => engine.off('tick', onTick);
+  process.once('SIGTERM', cleanup);
+  process.once('SIGINT',  cleanup);
 
   return server;
 }
