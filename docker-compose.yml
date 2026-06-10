@@ -7,5 +7,5 @@ services:
     environment:
       - PORT=3000
       - OPCUA_TCP_PORT=4840
-      - OPCUA_ENDPOINT_URL=opc.wss://yourdomain.com/opcua
+      - OPCUA_ENDPOINT_URL=opc.wss://simulation.clxmi.com/opcua
     restart: unless-stopped
