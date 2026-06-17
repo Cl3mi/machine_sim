@@ -42,3 +42,47 @@ test('getState machines expose stationId + buffer wiring', () => {
   assert.equal(a.inputBufferId, 'BUF0');
   assert.equal(a.outputBufferId, 'BUF1');
 });
+
+test('spawnMachine adds a parallel machine sharing the station wiring', () => {
+  const engine = new SimulationEngine(twoStationConfig());
+  const res = engine.spawnMachine({ stationId: 'S2' });
+  assert.equal(res.ok, true);
+  const station = engine.machines.filter(m => m.stationId === 'S2');
+  assert.equal(station.length, 2);
+  const spawned = station.find(m => m.id !== 'B');
+  assert.equal(spawned.id, 'Bb');
+  assert.equal(spawned.inputBufferId, 'BUF1');
+  assert.equal(spawned.outputBufferId, null);
+  assert.equal(spawned.cycleTime, station[0].cycleTime);
+});
+
+test('spawnMachine respects the 4-machine-per-station cap', () => {
+  const engine = new SimulationEngine(twoStationConfig());
+  assert.equal(engine.spawnMachine({ stationId: 'S2' }).ok, true); // Bb
+  assert.equal(engine.spawnMachine({ stationId: 'S2' }).ok, true); // Bc
+  assert.equal(engine.spawnMachine({ stationId: 'S2' }).ok, true); // Bd
+  const capped = engine.spawnMachine({ stationId: 'S2' });          // 5th
+  assert.equal(capped.ok, false);
+  assert.equal(engine.machines.filter(m => m.stationId === 'S2').length, 4);
+});
+
+test('spawnMachine persists across reset() but not resetToDefaults()', () => {
+  const engine = new SimulationEngine();   // DEFAULT_CONFIG, station S3 = M3
+  engine.spawnMachine({ stationId: 'S3' });
+  engine.reset();
+  assert.equal(engine.machines.filter(m => m.stationId === 'S3').length, 2);
+  engine.resetToDefaults();
+  assert.equal(engine.machines.filter(m => m.stationId === 'S3').length, 1);
+});
+
+test('a second machine increases a bottleneck station throughput', () => {
+  const base = new SimulationEngine(twoStationConfig(1, 8)); // S2 is the slow station
+  runTicks(base, 600);
+  const single = base.sink.partsReceived;
+
+  const dbl = new SimulationEngine(twoStationConfig(1, 8));
+  dbl.spawnMachine({ stationId: 'S2' });
+  runTicks(dbl, 600);
+  assert.ok(dbl.sink.partsReceived > single,
+    `expected parallel station to finish more parts (${dbl.sink.partsReceived} vs ${single})`);
+});

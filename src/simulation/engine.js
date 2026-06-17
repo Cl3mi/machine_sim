@@ -22,6 +22,10 @@ import EventEmitter from 'events';
 import { Part, Source, Buffer, Machine, Sink, ScrapSink, MachineState } from './entities.js';
 import { DEFAULT_CONFIG } from './config.js';
 
+// Maximum machines allowed per station (original + 3 parallel).
+const MAX_MACHINES_PER_STATION = 4;
+const SPAWN_SUFFIXES = ['b', 'c', 'd'];   // M3 → M3b → M3c → M3d
+
 export class SimulationEngine extends EventEmitter {
   constructor(config = DEFAULT_CONFIG) {
     super();
@@ -116,6 +120,44 @@ export class SimulationEngine extends EventEmitter {
         // If parts now exceed new capacity, leave them in (don't eject — too disruptive)
       }
     }
+  }
+
+  // Add a parallel machine to a station. The new machine shares the station's
+  // input/output buffers and copies its cycleTime / rejectRate. Returns
+  // { ok, id?, reason? }. New machines are appended to _config so reset() keeps
+  // them; resetToDefaults() drops them.
+  spawnMachine({ stationId } = {}) {
+    const stationMachines = this.machines.filter(m => m.stationId === stationId);
+    if (stationMachines.length === 0) return { ok: false, reason: 'unknown-station' };
+    if (stationMachines.length >= MAX_MACHINES_PER_STATION) {
+      return { ok: false, reason: 'cap-reached' };
+    }
+
+    const template = stationMachines[0];
+    const usedSuffixes = new Set(
+      stationMachines
+        .map(m => m.id.slice(template.id.length))
+        .filter(Boolean)
+    );
+    const suffix = SPAWN_SUFFIXES.find(s => !usedSuffixes.has(s));
+    if (!suffix) return { ok: false, reason: 'cap-reached' };
+    const newId = template.id + suffix;
+
+    const cfgEntry = {
+      id: newId,
+      stationId,
+      name: template.name,
+      cycleTime: template.cycleTime,
+      rejectRate: template.rejectRate,
+      inputBufferId: template.inputBufferId,
+      outputBufferId: template.outputBufferId,
+    };
+
+    this._config.machines.push(cfgEntry);
+    this.machines.push(new Machine(cfgEntry));
+    this._reindex();
+
+    return { ok: true, id: newId };
   }
 
   // Returns the per-tick history recorded since the last reset.
