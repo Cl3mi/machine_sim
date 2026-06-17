@@ -737,7 +737,7 @@ function updateMetricsDashboard(metrics, state) {
   if (!tbody || !metrics.machines) return;
   tbody.innerHTML = '';
 
-  for (const m of metrics.machines) {
+  for (const m of orderedMachines(metrics.machines)) {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><strong>${m.id}</strong> — ${m.name}${m.bottleneck ? '<span class="bottleneck-badge">Engpass</span>' : ''}</td>
@@ -975,6 +975,21 @@ function updateSuggestionBanner(metrics) {
   });
 }
 
+// Group machines by station in pipeline (first-appearance) order, sorted within
+// a station by id, so parallel machines (M3, M3b, M3c) stay together instead of
+// appearing in raw config order (where spawns are appended after later stations).
+function orderedMachines(machines) {
+  const stationFirstIndex = new Map();
+  machines.forEach((m, i) => {
+    if (!stationFirstIndex.has(m.stationId)) stationFirstIndex.set(m.stationId, i);
+  });
+  return [...machines].sort((a, b) => {
+    const sa = stationFirstIndex.get(a.stationId);
+    const sb = stationFirstIndex.get(b.stationId);
+    return sa !== sb ? sa - sb : a.id.localeCompare(b.id);
+  });
+}
+
 // ── Control panel ─────────────────────────────────────────────────────────────
 
 function buildControlSliders(state) {
@@ -985,7 +1000,7 @@ function buildControlSliders(state) {
     if (!c.classList.contains('section-label')) c.remove();
   });
 
-  for (const m of state.machines) {
+  for (const m of orderedMachines(state.machines)) {
     const div = document.createElement('div');
     div.className = 'slider-group';
     div.innerHTML = `
