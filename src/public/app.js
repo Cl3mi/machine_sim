@@ -174,44 +174,46 @@ function detectTransfers(prev, next) {
   if (!prev || !next) return [];
   const events = [];
 
-  const bufBy = (state, id) =>
-    state.buffers.find(b => b.id === id) ?? { totalPartsOut: 0, load: 0, capacity: 0 };
-  const machBy = (state, id) =>
-    state.machines.find(m => m.id === id) ?? { partsProcessed: 0 };
-  const sourceOf = (state) => state.source ?? { totalGenerated: 0 };
-  const scrapOf  = (state) => state.scrap  ?? { partsReceived: 0 };
-
-  // Source -> BUF0
-  const srcDelta = sourceOf(next).totalGenerated - sourceOf(prev).totalGenerated;
+  // Source → source-fed buffer
+  const srcDelta = (next.source?.totalGenerated ?? 0) - (prev.source?.totalGenerated ?? 0);
   if (srcDelta > 0) events.push({ connectorId: 'conn-src-b0', kind: 'good', count: srcDelta });
 
-  // Buffer pulls (cumulative totalPartsOut)
-  const bufPulls = [
-    ['BUF0', 'conn-b0-m1'],
-    ['BUF1', 'conn-b1-m2'],
-    ['BUF2', 'conn-b2-m3'],
-    ['BUF3', 'conn-b3-m4'],
-  ];
-  for (const [bufId, connId] of bufPulls) {
-    const d = bufBy(next, bufId).totalPartsOut - bufBy(prev, bufId).totalPartsOut;
-    if (d > 0) events.push({ connectorId: connId, kind: 'good', count: d });
+  const prevMach = {};
+  for (const m of prev.machines) prevMach[m.id] = m;
+
+  // Scrap is a single global counter; split this frame's scrap across the
+  // rejecting machines proportionally to how many parts each processed.
+  const scrapDelta = (next.scrap?.partsReceived ?? 0) - (prev.scrap?.partsReceived ?? 0);
+  const rejectDeltas = {};
+  let sumReject = 0;
+  for (const m of next.machines) {
+    if (m.rejectRate > 0) {
+      const d = Math.max(0, m.partsProcessed - (prevMach[m.id]?.partsProcessed ?? 0));
+      rejectDeltas[m.id] = d;
+      sumReject += d;
+    }
   }
 
-  // Machine outputs
-  const m1d = machBy(next, 'M1').partsProcessed - machBy(prev, 'M1').partsProcessed;
-  if (m1d > 0) events.push({ connectorId: 'conn-m1-b1', kind: 'good', count: m1d });
+  for (const m of next.machines) {
+    const pm = prevMach[m.id];
 
-  const m2d  = machBy(next, 'M2').partsProcessed - machBy(prev, 'M2').partsProcessed;
-  const m2sd = scrapOf(next).partsReceived - scrapOf(prev).partsReceived;
-  if (m2sd > 0)            events.push({ connectorId: 'conn-m2-scrap', kind: 'scrap', count: m2sd });
-  const m2good = Math.max(0, m2d - m2sd);
-  if (m2good > 0)          events.push({ connectorId: 'conn-m2-b2', kind: 'good', count: m2good });
+    // Pull animation: a new part entered this machine (currentPartId changed).
+    if (m.currentPartId != null && pm && pm.currentPartId !== m.currentPartId) {
+      events.push({ connectorId: `conn-in-${m.id}`, kind: 'good', count: 1 });
+    }
 
-  const m3d = machBy(next, 'M3').partsProcessed - machBy(prev, 'M3').partsProcessed;
-  if (m3d > 0) events.push({ connectorId: 'conn-m3-b3', kind: 'good', count: m3d });
+    const dProcessed = m.partsProcessed - (pm?.partsProcessed ?? 0);
+    if (dProcessed <= 0) continue;
 
-  const m4d = machBy(next, 'M4').partsProcessed - machBy(prev, 'M4').partsProcessed;
-  if (m4d > 0) events.push({ connectorId: 'conn-m4-sink', kind: 'good', count: m4d });
+    if (m.rejectRate > 0) {
+      const myScrap = sumReject > 0 ? Math.round(scrapDelta * (rejectDeltas[m.id] / sumReject)) : 0;
+      const myGood  = Math.max(0, dProcessed - myScrap);
+      if (myScrap > 0) events.push({ connectorId: `conn-scrap-${m.id}`, kind: 'scrap', count: myScrap });
+      if (myGood  > 0) events.push({ connectorId: `conn-out-${m.id}`,   kind: 'good',  count: myGood });
+    } else {
+      events.push({ connectorId: `conn-out-${m.id}`, kind: 'good', count: dProcessed });
+    }
+  }
 
   return events;
 }
@@ -1067,7 +1069,6 @@ document.getElementById('reject-rate').addEventListener('input', e => {
 
 function connectSSE() {
   const es = new EventSource('/api/events');
-  let slidersBuilt = false;
 
   es.addEventListener('message', e => {
     const { state, metrics } = JSON.parse(e.data);
