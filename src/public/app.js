@@ -89,7 +89,10 @@ function computeLayout(state) {
     }
   }
 
-  // Scrap sink sits below the lowest element, under the rejecting station.
+  // Scrap sink sits below the lowest element, under the first rejecting station.
+  // There is a single shared scrap sink even when several stations are quality
+  // gates; each gate still gets its own scrap connector below, the sink just
+  // anchors under the first one.
   const rejectCol = columns.find(c => c.kind === 'station' && c.machines.some(m => m.rejectRate > 0));
   const scrapY = maxY + 40;
   const scrapX = rejectCol ? rejectCol.x : totalW / 2;
@@ -474,10 +477,9 @@ function updatePipeline(state, metrics) {
   setTextContent('sink-count',  state.sink.partsReceived);
   setTextContent('scrap-count', state.scrap.partsReceived);
 
-  const rejectMachine = state.machines.find(m => m.rejectRate > 0);
-  if (rejectMachine) {
-    setTextContent('scrap-rate-label', (rejectMachine.rejectRate * 100).toFixed(0) + '%');
-  }
+  // Per-machine reject rates are shown in each machine's detail panel; the
+  // shared scrap sink no longer carries a single rate label.
+  setTextContent('scrap-rate-label', '');
 
   // ── Machine detail panel (if open) ─────────────────────────────────────────
   updateMachineDetail();
@@ -592,6 +594,19 @@ function openMachineDetail(id) {
   selectedMachineId = id;
   const panel = document.getElementById('machine-detail');
   if (panel) panel.hidden = false;
+
+  // Wire the reject-rate slider once; it always targets the selected machine.
+  const rejectSlider = document.getElementById('md-reject-slider');
+  if (rejectSlider && !rejectSlider.dataset.wired) {
+    rejectSlider.dataset.wired = '1';
+    rejectSlider.addEventListener('input', e => {
+      const v = parseInt(e.target.value, 10);
+      const valEl = document.getElementById('md-reject-val');
+      if (valEl) valEl.textContent = v + '%';
+      if (selectedMachineId) postControl({ machineId: selectedMachineId, rejectRate: v / 100 });
+    });
+  }
+
   // Push an immediate render so the panel populates before the next SSE frame
   updateMachineDetail();
   if (lastState) {
@@ -660,15 +675,13 @@ function updateMachineDetail() {
   setTextContent('md-processed', m.partsProcessed);
   setTextContent('md-wait',      (mm?.avgQueueWait ?? 0).toFixed(1) + ' ticks');
 
-  // Reject rate only meaningful for the quality gate (M2 or any non-zero)
-  const rejectStat = document.getElementById('md-reject-stat');
-  if (rejectStat) {
-    if (m.rejectRate && m.rejectRate > 0) {
-      rejectStat.hidden = false;
-      setTextContent('md-reject', (m.rejectRate * 100).toFixed(0) + '%');
-    } else {
-      rejectStat.hidden = true;
-    }
+  // Quality gate: editable reject-rate slider, shown for every machine.
+  const rejectSlider = document.getElementById('md-reject-slider');
+  const rejectValEl  = document.getElementById('md-reject-val');
+  const pct = Math.round((m.rejectRate ?? 0) * 100);
+  if (rejectValEl) rejectValEl.textContent = pct + '%';
+  if (rejectSlider && document.activeElement !== rejectSlider) {
+    rejectSlider.value = pct;
   }
 
   // Time breakdown stacked bar
@@ -727,7 +740,7 @@ function updateMetricsDashboard(metrics, state) {
   if (!tbody || !metrics.machines) return;
   tbody.innerHTML = '';
 
-  for (const m of metrics.machines) {
+  for (const m of orderedMachines(metrics.machines)) {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><strong>${m.id}</strong> — ${m.name}${m.bottleneck ? '<span class="bottleneck-badge">Engpass</span>' : ''}</td>
@@ -945,18 +958,41 @@ function resetParticles() {
 function updateSuggestionBanner(metrics) {
   const banner = document.getElementById('suggestion-banner');
   if (!banner) return;
-  const s = metrics?.suggestion;
-  if (!s) {
+  const suggestions = metrics?.suggestions ?? [];
+  if (suggestions.length === 0) {
     banner.hidden = true;
     banner.innerHTML = '';
     return;
   }
   banner.hidden = false;
-  banner.innerHTML =
-    `<span class="sg-text">⚠ ${s.label}</span>` +
-    `<button class="sg-btn" id="sg-spawn" type="button">+ Parallele Maschine hinzufügen</button>`;
-  document.getElementById('sg-spawn').addEventListener('click', () => {
-    postControl({ stationId: s.stationId }, 'spawnMachine');
+  banner.innerHTML = suggestions.map((s, i) =>
+    `<div class="sg-row">` +
+      `<span class="sg-text">⚠ ${s.label}</span>` +
+      `<button class="sg-btn" data-station="${s.stationId}" data-idx="${i}" type="button">+ Parallele Maschine hinzufügen</button>` +
+    `</div>`
+  ).join('');
+  banner.querySelectorAll('.sg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      postControl({ stationId: btn.dataset.station }, 'spawnMachine');
+    });
+  });
+}
+
+// Group machines by station in pipeline (first-appearance) order, sorted within
+// a station by id, so parallel machines (M3, M3b, M3c) stay together instead of
+// appearing in raw config order (where spawns are appended after later stations).
+// Assumes the original station machines appear in pipeline order in the array
+// (true for the current linear config); for a non-linear line, derive order from
+// the buffer chain instead (see engine.js _assignStationOrder).
+function orderedMachines(machines) {
+  const stationFirstIndex = new Map();
+  machines.forEach((m, i) => {
+    if (!stationFirstIndex.has(m.stationId)) stationFirstIndex.set(m.stationId, i);
+  });
+  return [...machines].sort((a, b) => {
+    const sa = stationFirstIndex.get(a.stationId);
+    const sb = stationFirstIndex.get(b.stationId);
+    return sa !== sb ? sa - sb : a.id.localeCompare(b.id);
   });
 }
 
@@ -970,7 +1006,7 @@ function buildControlSliders(state) {
     if (!c.classList.contains('section-label')) c.remove();
   });
 
-  for (const m of state.machines) {
+  for (const m of orderedMachines(state.machines)) {
     const div = document.createElement('div');
     div.className = 'slider-group';
     div.innerHTML = `
@@ -1039,13 +1075,8 @@ async function applyReset(action) {
   document.getElementById('val-src-interval').textContent = newState.source.interval;
   document.getElementById('material-stock').value = newState.source.materialStock;
   document.getElementById('val-material-stock').textContent = newState.source.materialStock;
-  const m2 = newState.machines.find(m => m.id === 'M2');
-  if (m2) {
-    const pct = Math.round(m2.rejectRate * 100);
-    document.getElementById('reject-rate').value = pct;
-    document.getElementById('val-reject-rate').textContent = pct + '%';
-  }
 }
+
 
 document.getElementById('btn-reset').addEventListener('click', () => applyReset('reset'));
 document.getElementById('btn-reset-defaults').addEventListener('click', () => applyReset('resetToDefaults'));
@@ -1085,11 +1116,6 @@ document.getElementById('material-stock').addEventListener('input', e => {
   postControl({ materialStock: v });
 });
 
-document.getElementById('reject-rate').addEventListener('input', e => {
-  const v = parseInt(e.target.value, 10);
-  document.getElementById('val-reject-rate').textContent = v + '%';
-  postControl({ machineId: 'M2', rejectRate: v / 100 });
-});
 
 // ── SSE connection ────────────────────────────────────────────────────────────
 

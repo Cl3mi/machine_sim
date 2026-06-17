@@ -24,42 +24,46 @@ function makeState(machineSpecs) {
   };
 }
 
-test('bottleneck is the busiest station (highest utilization)', () => {
+test('a single saturated station is flagged and gets one suggestion', () => {
   const state = makeState([
     { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 30 },
     { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95 },
   ]);
   const m = calculateMetrics(state);
-  const b = m.machines.find(x => x.id === 'B');
-  const a = m.machines.find(x => x.id === 'A');
-  assert.equal(b.bottleneck, true);
-  assert.equal(a.bottleneck, false);
+  assert.equal(m.machines.find(x => x.id === 'B').bottleneck, true);
+  assert.equal(m.machines.find(x => x.id === 'A').bottleneck, false);
+  assert.equal(m.suggestions.length, 1);
+  assert.equal(m.suggestions[0].type, 'add-parallel-machine');
+  assert.equal(m.suggestions[0].stationId, 'S2');
+  assert.equal(m.suggestions[0].machineId, 'B');
+  assert.match(m.suggestions[0].label, /B/);
 });
 
-test('suggestion targets the bottleneck station below the cap', () => {
+test('multiple saturated stations are all flagged, suggested worst-first', () => {
   const state = makeState([
-    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 30 },
+    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 70 },
     { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95 },
   ]);
   const m = calculateMetrics(state);
-  assert.ok(m.suggestion);
-  assert.equal(m.suggestion.type, 'add-parallel-machine');
-  assert.equal(m.suggestion.stationId, 'S2');
-  assert.equal(m.suggestion.machineId, 'B');
-  assert.match(m.suggestion.label, /B/);
+  // Both stations exceed the 0.6 threshold (0.70 and 0.95).
+  assert.equal(m.machines.find(x => x.id === 'A').bottleneck, true);
+  assert.equal(m.machines.find(x => x.id === 'B').bottleneck, true);
+  // Two suggestions, busiest station (S2, 0.95) first.
+  assert.equal(m.suggestions.length, 2);
+  assert.deepEqual(m.suggestions.map(s => s.stationId), ['S2', 'S1']);
 });
 
-test('no suggestion when no station exceeds the utilization threshold', () => {
+test('empty suggestions when no station exceeds the utilization threshold', () => {
   const state = makeState([
     { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 20 },
     { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 25 },
   ]);
   const m = calculateMetrics(state);
-  assert.equal(m.suggestion, null);
+  assert.deepEqual(m.suggestions, []);
   assert.ok(m.machines.every(x => x.bottleneck === false));
 });
 
-test('no suggestion when the bottleneck station is already at the cap', () => {
+test('saturated station at the cap is flagged but yields no suggestion', () => {
   const state = makeState([
     { id: 'A',  stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 30 },
     { id: 'B',  stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95 },
@@ -69,7 +73,7 @@ test('no suggestion when the bottleneck station is already at the cap', () => {
   ]);
   const m = calculateMetrics(state);
   assert.ok(m.machines.find(x => x.id === 'B').bottleneck);
-  assert.equal(m.suggestion, null);
+  assert.deepEqual(m.suggestions, []);
 });
 
 test('avgQueueWait uses the machine input buffer', () => {

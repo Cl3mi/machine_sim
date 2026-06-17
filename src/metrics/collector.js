@@ -84,11 +84,12 @@ export function calculateMetrics(state) {
   });
 
   // ── Bottleneck detection (station-level, utilization-based) ─────────────────
-  // The constraint is the busiest STATION: the one whose machines spend the
-  // largest share of time PROCESSING. (The previous blocked-ratio heuristic
-  // flagged the machine *upstream* of the constraint — the wrong place to add
-  // capacity.) Adding a parallel machine lowers per-machine utilization, so the
-  // flagged bottleneck moves — the intended teaching feedback.
+  // Every station whose average machine utilization exceeds the threshold is a
+  // bottleneck — there can be several at once. (The previous heuristic flagged
+  // only the single busiest station.) Adding a parallel machine lowers a
+  // station's per-machine utilization, so a flagged bottleneck clears — the
+  // intended teaching feedback. Each flagged station that still has room yields
+  // one spawn suggestion; suggestions are ordered worst-utilization-first.
   const stationStats = new Map();   // stationId -> { utilSum, count }
   machineMetrics.forEach(mm => {
     const s = stationStats.get(mm.stationId) ?? { utilSum: 0, count: 0 };
@@ -97,32 +98,27 @@ export function calculateMetrics(state) {
     stationStats.set(mm.stationId, s);
   });
 
-  let bottleneckStationId = null;
-  let maxStationUtil      = -1;
-  for (const [stationId, s] of stationStats) {
-    const avgUtil = s.count > 0 ? s.utilSum / s.count : 0;
-    if (avgUtil > maxStationUtil) {
-      maxStationUtil      = avgUtil;
-      bottleneckStationId = stationId;
-    }
-  }
+  const bottleneckStations = [...stationStats.entries()]
+    .map(([stationId, s]) => ({ stationId, avgUtil: s.count > 0 ? s.utilSum / s.count : 0 }))
+    .filter(s => s.avgUtil > BOTTLENECK_UTIL_THRESHOLD)
+    .sort((a, b) => b.avgUtil - a.avgUtil);
 
-  let suggestion = null;
-  if (bottleneckStationId != null && maxStationUtil > BOTTLENECK_UTIL_THRESHOLD) {
-    machineMetrics.forEach(mm => {
-      if (mm.stationId === bottleneckStationId) mm.bottleneck = true;
+  const bottleneckStationIds = new Set(bottleneckStations.map(s => s.stationId));
+  machineMetrics.forEach(mm => {
+    if (bottleneckStationIds.has(mm.stationId)) mm.bottleneck = true;
+  });
+
+  const suggestions = [];
+  for (const { stationId } of bottleneckStations) {
+    const stationMachines = machineMetrics.filter(mm => mm.stationId === stationId);
+    if (stationMachines.length >= MAX_MACHINES_PER_STATION) continue;
+    const rep = stationMachines[0];
+    suggestions.push({
+      type: 'add-parallel-machine',
+      stationId,
+      machineId: rep.id,
+      label: `${rep.id} (${rep.name}) ist ein Engpass - passe die Cycle Time an oder füge eine parallele Maschine hinzu, um den Durchsatz zu erhöhen.`,
     });
-
-    const stationMachines = machineMetrics.filter(mm => mm.stationId === bottleneckStationId);
-    if (stationMachines.length < MAX_MACHINES_PER_STATION) {
-      const rep = stationMachines[0];
-      suggestion = {
-        type: 'add-parallel-machine',
-        stationId: bottleneckStationId,
-        machineId: rep.id,
-        label: `${rep.id} (${rep.name}) ist ein Engpass - passe die Cycle Time an oder füge eine parallele Maschine hinzu, um den Durchsatz zu erhöhen.`,
-      };
-    }
   }
 
   // ── Buffer metrics ─────────────────────────────────────────────────────────
@@ -141,6 +137,6 @@ export function calculateMetrics(state) {
     buffers:       bufferMetrics,
     simTime:       tick,
     partsInSystem,
-    suggestion,
+    suggestions,
   };
 }
