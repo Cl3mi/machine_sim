@@ -621,6 +621,12 @@ function updateMachineDetail() {
 
   const m = lastState.machines.find(x => x.id === selectedMachineId);
   if (!m) return;
+  const removeBtn = document.getElementById('md-remove');
+  if (removeBtn) {
+    const stationMachines = lastState.machines.filter(x => x.stationId === m.stationId);
+    // The original (first-listed) station machine cannot be removed.
+    removeBtn.disabled = stationMachines.length <= 1 || stationMachines[0].id === m.id;
+  }
   const mm = lastMetrics?.machines?.find(x => x.id === selectedMachineId);
 
   setTextContent('md-id',   m.id);
@@ -934,6 +940,26 @@ function resetParticles() {
   particles = [];
 }
 
+// ── Spawn suggestion banner ─────────────────────────────────────────────────
+
+function updateSuggestionBanner(metrics) {
+  const banner = document.getElementById('suggestion-banner');
+  if (!banner) return;
+  const s = metrics?.suggestion;
+  if (!s) {
+    banner.hidden = true;
+    banner.innerHTML = '';
+    return;
+  }
+  banner.hidden = false;
+  banner.innerHTML =
+    `<span class="sg-text">⚠ ${s.label}</span>` +
+    `<button class="sg-btn" id="sg-spawn" type="button">+ Parallele Maschine hinzufügen</button>`;
+  document.getElementById('sg-spawn').addEventListener('click', () => {
+    postControl({ stationId: s.stationId }, 'spawnMachine');
+  });
+}
+
 // ── Control panel ─────────────────────────────────────────────────────────────
 
 function buildControlSliders(state) {
@@ -1111,6 +1137,13 @@ function connectSSE() {
 // ── Machine detail panel: close handlers ─────────────────────────────────────
 
 document.getElementById('md-close')?.addEventListener('click', closeMachineDetail);
+document.getElementById('md-spawn')?.addEventListener('click', () => {
+  const m = lastState?.machines.find(x => x.id === selectedMachineId);
+  if (m) postControl({ stationId: m.stationId }, 'spawnMachine');
+});
+document.getElementById('md-remove')?.addEventListener('click', () => {
+  if (selectedMachineId) postControl({ machineId: selectedMachineId }, 'removeMachine');
+});
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && selectedMachineId) closeMachineDetail();
 });
