@@ -955,6 +955,15 @@ function resetParticles() {
 
 // ── Spawn suggestion banner ─────────────────────────────────────────────────
 
+// Escape a generated string for safe interpolation into an HTML attribute value.
+function escapeAttr(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 function updateSuggestionBanner(metrics) {
   const banner = document.getElementById('suggestion-banner');
   if (!banner) return;
@@ -967,7 +976,7 @@ function updateSuggestionBanner(metrics) {
   banner.hidden = false;
   banner.innerHTML = suggestions.map((s, i) =>
     `<div class="sg-row">` +
-      `<span class="sg-text">⚠ ${s.label}</span>` +
+      `<span class="sg-text">⚠ ${s.label} <span class="info-icon" data-tip="${escapeAttr(s.reason)}">i</span></span>` +
       `<button class="sg-btn" data-station="${s.stationId}" data-idx="${i}" type="button">+ Parallele Maschine hinzufügen</button>` +
     `</div>`
   ).join('');
