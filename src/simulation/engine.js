@@ -140,6 +140,9 @@ export class SimulationEngine extends EventEmitter {
       },
       machines: this.machines.map(m => ({
         id:              m.id,
+        stationId:       m.stationId,
+        inputBufferId:   m.inputBufferId,
+        outputBufferId:  m.outputBufferId,
         name:            m.name,
         cycleTime:       m.cycleTime,
         rejectRate:      m.rejectRate,
@@ -187,8 +190,45 @@ export class SimulationEngine extends EventEmitter {
     this.sink      = new Sink();
     this.scrapSink = new ScrapSink();
 
+    this._reindex();
+
     // Store initial config values so reset always goes back to defaults
     this._initialConfig = JSON.parse(JSON.stringify(cfg));
+  }
+
+  // Rebuild the buffer lookup and station ordering. Call whenever the set of
+  // machines or buffers changes (reset, spawn, remove).
+  _reindex() {
+    this._bufferById = new Map(this.buffers.map(b => [b.id, b]));
+    this._assignStationOrder();
+  }
+
+  // Walk the buffer graph from the source-fed buffer (the one no machine
+  // produces) and assign each station an increasing `order`. Machines sharing a
+  // stationId share an order. Used to process downstream→upstream each tick.
+  _assignStationOrder() {
+    const produced = new Set(
+      this.machines.map(m => m.outputBufferId).filter(id => id != null)
+    );
+    let curId = this.buffers.find(b => !produced.has(b.id))?.id
+              ?? this.buffers[0]?.id;
+
+    const stationOrder = new Map();   // stationId -> order
+    let order = 0;
+    const seen = new Set();
+    while (curId != null && !seen.has(curId)) {
+      seen.add(curId);
+      const here = this.machines.filter(m => m.inputBufferId === curId);
+      if (here.length === 0) break;
+      const stationId = here[0].stationId;
+      if (!stationOrder.has(stationId)) stationOrder.set(stationId, order++);
+      curId = here[0].outputBufferId;   // parallel machines share output
+    }
+    for (const m of this.machines) {
+      m._order = stationOrder.get(m.stationId) ?? 0;
+    }
+    // Machines processed end→start: highest order first.
+    this._processOrder = [...this.machines].sort((a, b) => b._order - a._order);
   }
 
   // ── Private: tick scheduling ───────────────────────────────────────────────
@@ -211,45 +251,31 @@ export class SimulationEngine extends EventEmitter {
     this.source.lastEmitted = false;
 
     // ── STEP 1: Advance machines (count down processing timers) ─────────────
-    // Process from the END of the line backwards to prevent "chain reaction"
-    // where a part moves through multiple machines in one tick.
-    for (let i = this.machines.length - 1; i >= 0; i--) {
-      const machine = this.machines[i];
-      const downstreamBuffer = this.buffers[i]; // BUF after this machine (BUF0..BUF3)
-      // Note: machine index i maps to buffers[i] as downstream
-      // layout: BUF0 → M1(0) → BUF1 → M2(1) → BUF2 → M3(2) → BUF3 → M4(3)
-
-      this._advanceMachine(machine, i);
+    // Process downstream→upstream (highest station order first) to prevent a
+    // part cascading through multiple machines in one tick.
+    for (const machine of this._processOrder) {
+      this._advanceMachine(machine);
     }
 
     // ── STEP 2: Source emits parts ───────────────────────────────────────────
     this._tickSource();
 
-    // ── STEP 3: Pull parts from upstream buffers into starved/idle machines ──
-    // Again process from end to start so we don't cascade
-    for (let i = this.machines.length - 1; i >= 0; i--) {
-      const machine        = this.machines[i];
-      const upstreamBuffer = this.buffers[i];    // buffer *before* this machine
-      // Machines index:  0=M1, 1=M2, 2=M3, 3=M4
-      // Upstream buffers: buffers[0]=BUF0 (before M1), buffers[1]=BUF1, ...
-
+    // ── STEP 3: Pull parts from each machine's input buffer ──────────────────
+    for (const machine of this._processOrder) {
       if (machine.state === MachineState.IDLE || machine.state === MachineState.STARVED) {
-        if (upstreamBuffer.parts.length > 0) {
-          // Pull the oldest part from the upstream buffer
+        const upstreamBuffer = this._bufferById.get(machine.inputBufferId);
+        if (upstreamBuffer && upstreamBuffer.parts.length > 0) {
           const part = upstreamBuffer.parts.shift();
           upstreamBuffer.totalPartsOut++;
 
-          // Accumulate the wait time this part spent in the buffer
           const waitTicks = this.tick - part._bufferEnterTick;
           upstreamBuffer.totalWaitTicks += (waitTicks > 0 ? waitTicks : 0);
 
-          // Load the part into the machine
           part.enteredMachineAt = this.tick;
           machine.currentPart   = part;
           machine.ticksLeft     = machine.cycleTime;
           machine.state         = MachineState.PROCESSING;
         } else {
-          // Nothing in buffer → starved (unless we just finished and are idle momentarily)
           machine.state = MachineState.STARVED;
         }
       }
@@ -320,74 +346,53 @@ export class SimulationEngine extends EventEmitter {
 
   // ── Private: advance one machine for this tick ────────────────────────────
 
-  _advanceMachine(machine, index) {
-    // Downstream buffer is buffers[index] only for M1..M3; M4 pushes to Sink
-    // index 0=M1→BUF1(buffers[1]), 1=M2→BUF2(buffers[2]), 2=M3→BUF3(buffers[3]), 3=M4→SINK
-    // Wait — let's re-map:
-    // Pipeline: BUF0 → M1 → BUF1 → M2 → BUF2 → M3 → BUF3 → M4 → SINK
-    // machine index:  0        1        2        3
-    // upstream buf:   0        1        2        3
-    // downstream buf: 1        2        3      (SINK for index 3)
-
+  _advanceMachine(machine) {
     if (machine.state === MachineState.BLOCKED) {
-      // Try to push the finished part downstream now that a slot may have opened
-      this._tryPushDownstream(machine, index);
+      this._tryPushDownstream(machine);
       return;
     }
 
     if (machine.state !== MachineState.PROCESSING) return;
 
     machine.ticksLeft--;
-
     if (machine.ticksLeft > 0) return; // still working
 
-    // ── Processing complete ──────────────────────────────────────────────────
     machine.partsProcessed++;
-    const part = machine.currentPart;
 
-    // M2 quality gate: randomly reject parts based on rejectRate
+    // Quality gate: randomly reject parts based on rejectRate
     if (machine.rejectRate > 0 && Math.random() < machine.rejectRate) {
-      // Part is scrapped
       this.scrapSink.partsReceived++;
       machine.currentPart = null;
       machine.state       = MachineState.IDLE;
-      // Machine is now free — it will be loaded in Step 3 if buffer has parts
       return;
     }
 
-    // Try to push the finished part into the downstream buffer (or Sink)
-    this._tryPushDownstream(machine, index);
+    this._tryPushDownstream(machine);
   }
 
-  _tryPushDownstream(machine, index) {
+  _tryPushDownstream(machine) {
     const part = machine.currentPart;
 
-    if (index === this.machines.length - 1) {
-      // Last machine (M4) → push to Sink
+    if (machine.outputBufferId == null) {
+      // Pushes to the Sink
       part.completedAt = this.tick;
       this.sink.partsReceived++;
       this.sink.completedParts.push(part);
-      // Trim to last 200 to prevent unbounded growth
-      if (this.sink.completedParts.length > 200) {
-        this.sink.completedParts.shift();
-      }
+      if (this.sink.completedParts.length > 200) this.sink.completedParts.shift();
+      machine.currentPart = null;
+      machine.state       = MachineState.IDLE;
+      return;
+    }
+
+    const downstreamBuffer = this._bufferById.get(machine.outputBufferId);
+    if (downstreamBuffer && downstreamBuffer.parts.length < downstreamBuffer.capacity) {
+      part._bufferEnterTick = this.tick;
+      downstreamBuffer.parts.push(part);
       machine.currentPart = null;
       machine.state       = MachineState.IDLE;
     } else {
-      // Push to downstream buffer (index+1)
-      const downstreamBuffer = this.buffers[index + 1];
-      if (downstreamBuffer.parts.length < downstreamBuffer.capacity) {
-        // Buffer has space — push the part
-        part._bufferEnterTick = this.tick;
-        downstreamBuffer.parts.push(part);
-        machine.currentPart = null;
-        machine.state       = MachineState.IDLE;
-      } else {
-        // Buffer full → machine is BLOCKED
-        // The part stays in the machine until space opens up.
-        // This back-pressure propagates upstream (starving earlier machines).
-        machine.state = MachineState.BLOCKED;
-      }
+      // Buffer full → BLOCKED (back-pressure propagates upstream)
+      machine.state = MachineState.BLOCKED;
     }
   }
 
