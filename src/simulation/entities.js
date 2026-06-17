@@ -61,6 +61,9 @@ export class Machine {
     this.name        = cfg.name;
     this.cycleTime   = cfg.cycleTime;
     this.rejectRate  = cfg.rejectRate ?? 0;    // fraction 0–1; non-zero on M2
+    this.stationId      = cfg.stationId;
+    this.inputBufferId  = cfg.inputBufferId;
+    this.outputBufferId = cfg.outputBufferId ?? null;   // null ⇒ pushes to Sink
 
     this.state       = MachineState.IDLE;
     this.currentPart = null;       // Part currently being processed
