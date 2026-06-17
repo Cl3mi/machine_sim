@@ -474,10 +474,9 @@ function updatePipeline(state, metrics) {
   setTextContent('sink-count',  state.sink.partsReceived);
   setTextContent('scrap-count', state.scrap.partsReceived);
 
-  const rejectMachine = state.machines.find(m => m.rejectRate > 0);
-  if (rejectMachine) {
-    setTextContent('scrap-rate-label', (rejectMachine.rejectRate * 100).toFixed(0) + '%');
-  }
+  // Per-machine reject rates are shown in each machine's detail panel; the
+  // shared scrap sink no longer carries a single rate label.
+  setTextContent('scrap-rate-label', '');
 
   // ── Machine detail panel (if open) ─────────────────────────────────────────
   updateMachineDetail();
@@ -592,6 +591,19 @@ function openMachineDetail(id) {
   selectedMachineId = id;
   const panel = document.getElementById('machine-detail');
   if (panel) panel.hidden = false;
+
+  // Wire the reject-rate slider once; it always targets the selected machine.
+  const rejectSlider = document.getElementById('md-reject-slider');
+  if (rejectSlider && !rejectSlider.dataset.wired) {
+    rejectSlider.dataset.wired = '1';
+    rejectSlider.addEventListener('input', e => {
+      const v = parseInt(e.target.value, 10);
+      const valEl = document.getElementById('md-reject-val');
+      if (valEl) valEl.textContent = v + '%';
+      if (selectedMachineId) postControl({ machineId: selectedMachineId, rejectRate: v / 100 });
+    });
+  }
+
   // Push an immediate render so the panel populates before the next SSE frame
   updateMachineDetail();
   if (lastState) {
@@ -660,15 +672,13 @@ function updateMachineDetail() {
   setTextContent('md-processed', m.partsProcessed);
   setTextContent('md-wait',      (mm?.avgQueueWait ?? 0).toFixed(1) + ' ticks');
 
-  // Reject rate only meaningful for the quality gate (M2 or any non-zero)
-  const rejectStat = document.getElementById('md-reject-stat');
-  if (rejectStat) {
-    if (m.rejectRate && m.rejectRate > 0) {
-      rejectStat.hidden = false;
-      setTextContent('md-reject', (m.rejectRate * 100).toFixed(0) + '%');
-    } else {
-      rejectStat.hidden = true;
-    }
+  // Quality gate: editable reject-rate slider, shown for every machine.
+  const rejectSlider = document.getElementById('md-reject-slider');
+  const rejectValEl  = document.getElementById('md-reject-val');
+  const pct = Math.round((m.rejectRate ?? 0) * 100);
+  if (rejectValEl) rejectValEl.textContent = pct + '%';
+  if (rejectSlider && document.activeElement !== rejectSlider) {
+    rejectSlider.value = pct;
   }
 
   // Time breakdown stacked bar
@@ -1044,13 +1054,8 @@ async function applyReset(action) {
   document.getElementById('val-src-interval').textContent = newState.source.interval;
   document.getElementById('material-stock').value = newState.source.materialStock;
   document.getElementById('val-material-stock').textContent = newState.source.materialStock;
-  const m2 = newState.machines.find(m => m.id === 'M2');
-  if (m2) {
-    const pct = Math.round(m2.rejectRate * 100);
-    document.getElementById('reject-rate').value = pct;
-    document.getElementById('val-reject-rate').textContent = pct + '%';
-  }
 }
+
 
 document.getElementById('btn-reset').addEventListener('click', () => applyReset('reset'));
 document.getElementById('btn-reset-defaults').addEventListener('click', () => applyReset('resetToDefaults'));
@@ -1090,11 +1095,6 @@ document.getElementById('material-stock').addEventListener('input', e => {
   postControl({ materialStock: v });
 });
 
-document.getElementById('reject-rate').addEventListener('input', e => {
-  const v = parseInt(e.target.value, 10);
-  document.getElementById('val-reject-rate').textContent = v + '%';
-  postControl({ machineId: 'M2', rejectRate: v / 100 });
-});
 
 // ── SSE connection ────────────────────────────────────────────────────────────
 
