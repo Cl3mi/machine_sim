@@ -101,44 +101,102 @@ export function calculateMetrics(state) {
     };
   });
 
-  // ── Bottleneck detection (station-level, utilization-based) ─────────────────
-  // Every station whose average machine utilization exceeds the threshold is a
-  // bottleneck — there can be several at once. (The previous heuristic flagged
-  // only the single busiest station.) Adding a parallel machine lowers a
-  // station's per-machine utilization, so a flagged bottleneck clears — the
-  // intended teaching feedback. Each flagged station that still has room yields
-  // one spawn suggestion; suggestions are ordered worst-utilization-first.
-  const stationStats = new Map();   // stationId -> { utilSum, count }
+  // ── Bottleneck detection (flow-based: utilization gate + starvation/blocking) ─
+  // A station is the *true constraint* when it is busy (high utilization) AND
+  // barely blocked — a blocked station is a victim of a downstream constraint.
+  // Two confirming flow signals (a starved downstream, a backed-up upstream
+  // buffer) raise a confidence score used to rank constraints and pick the
+  // primary one. See the design spec referenced in the file header.
+  const clamp = (x) => Math.max(0, Math.min(1, x));
+
+  // Aggregate per station (ratios of summed ticks across parallel machines).
+  const stationAgg = new Map(); // stationId -> aggregate
+  for (const mc of machines) {
+    const totalTicks = mc.ticksProcessing + mc.ticksBlocked + mc.ticksStarved + mc.ticksIdle;
+    const a = stationAgg.get(mc.stationId) ?? {
+      stationId: mc.stationId, proc: 0, blocked: 0, starved: 0, total: 0,
+      inputBufferId: mc.inputBufferId, outputBufferId: mc.outputBufferId,
+    };
+    a.proc    += mc.ticksProcessing;
+    a.blocked += mc.ticksBlocked;
+    a.starved += mc.ticksStarved;
+    a.total   += totalTicks;
+    stationAgg.set(mc.stationId, a);
+  }
+  for (const a of stationAgg.values()) {
+    a.avgUtil      = a.total > 0 ? a.proc    / a.total : 0;
+    a.blockedRatio = a.total > 0 ? a.blocked / a.total : 0;
+    a.starvedRatio = a.total > 0 ? a.starved / a.total : 0;
+    const inBuf = bufferById[a.inputBufferId] ?? null;
+    a.inputFill  = inBuf && inBuf.capacity > 0 ? inBuf.load / inBuf.capacity : 0;
+  }
+
+  // Topology (linear chain): downstream station = the station whose input
+  // buffer is this station's output buffer.
+  const stationByInputBuffer = new Map();
+  for (const a of stationAgg.values()) stationByInputBuffer.set(a.inputBufferId, a.stationId);
+  for (const a of stationAgg.values()) {
+    const downId = a.outputBufferId != null ? stationByInputBuffer.get(a.outputBufferId) : undefined;
+    a.downstream = downId != null ? stationAgg.get(downId) : null;
+  }
+
+  // Gate + confidence score.
+  const constraints = [];
+  for (const a of stationAgg.values()) {
+    const busy       = a.avgUtil > BOTTLENECK_UTIL_THRESHOLD;
+    const notBlocked = a.blockedRatio < BLOCKED_MAX;
+    a.isConstraint = busy && notBlocked;
+    if (!a.isConstraint) continue;
+    const starveTerm = a.downstream ? clamp(a.downstream.starvedRatio) : 1;
+    a.confidence =
+        W_UTIL   * clamp(a.avgUtil)
+      + W_BLOCK  * (1 - a.blockedRatio / BLOCKED_MAX)
+      + W_STARVE * starveTerm
+      + W_FILL   * clamp(a.inputFill);
+    constraints.push(a);
+  }
+  constraints.sort((x, y) => y.confidence - x.confidence);
+
+  const constraintStationIds = new Set(constraints.map(a => a.stationId));
+  const primaryStationId     = constraints[0]?.stationId ?? null;
+
+  // Write flags + flowState onto each machine (station-level verdict).
   machineMetrics.forEach(mm => {
-    const s = stationStats.get(mm.stationId) ?? { utilSum: 0, count: 0 };
-    s.utilSum += mm.utilization;
-    s.count   += 1;
-    stationStats.set(mm.stationId, s);
+    const a = stationAgg.get(mm.stationId);
+    mm.bottleneck          = constraintStationIds.has(mm.stationId);
+    mm.isPrimaryConstraint = mm.stationId === primaryStationId;
+    mm.flowState =
+        mm.bottleneck                 ? 'CONSTRAINT'
+      : a.blockedRatio >= BLOCKED_MAX  ? 'BLOCKED_BY_DOWNSTREAM'
+      : a.starvedRatio >= STARVED_MIN  ? 'STARVED_BY_UPSTREAM'
+      :                                  'BALANCED';
   });
 
-  const bottleneckStations = [...stationStats.entries()]
-    .map(([stationId, s]) => ({ stationId, avgUtil: s.count > 0 ? s.utilSum / s.count : 0 }))
-    .filter(s => s.avgUtil > BOTTLENECK_UTIL_THRESHOLD)
-    .sort((a, b) => b.avgUtil - a.avgUtil);
+  // Source-starved guard: only relevant when NO internal constraint was found.
+  const outputBuffers = new Set(
+    [...stationAgg.values()].map(a => a.outputBufferId).filter(id => id != null)
+  );
+  const firstStation = [...stationAgg.values()].find(a => !outputBuffers.has(a.inputBufferId)) ?? null;
+  const sourceStarved = firstStation != null && firstStation.starvedRatio >= STARVED_MIN;
+  const anyBusy = [...stationAgg.values()].some(a => a.avgUtil > BOTTLENECK_UTIL_THRESHOLD);
 
-  const bottleneckStationIds = new Set(bottleneckStations.map(s => s.stationId));
-  machineMetrics.forEach(mm => {
-    if (bottleneckStationIds.has(mm.stationId)) mm.bottleneck = true;
-  });
-
+  // Suggestions: one spawn per constraint with room, ranked by confidence.
+  // (Reason text + diagnostic note are finished in a later task.)
   const suggestions = [];
-  for (const { stationId, avgUtil } of bottleneckStations) {
-    const stationMachines = machineMetrics.filter(mm => mm.stationId === stationId);
+  for (const a of constraints) {
+    const stationMachines = machineMetrics.filter(mm => mm.stationId === a.stationId);
     if (stationMachines.length >= MAX_MACHINES_PER_STATION) continue;
     const rep = stationMachines[0];
     suggestions.push({
       type: 'add-parallel-machine',
-      stationId,
+      stationId: a.stationId,
       machineId: rep.id,
-      avgUtil,
+      avgUtil: a.avgUtil,
       threshold: BOTTLENECK_UTIL_THRESHOLD,
-      label: `${rep.id} (${rep.name}) ist ein Engpass - passe die Cycle Time an oder füge eine parallele Maschine hinzu, um den Durchsatz zu erhöhen.`,
-      reason: `Erkannt, weil Station ${stationId} mit ${Math.round(avgUtil * 100)}% Auslastung läuft — über der ${Math.round(BOTTLENECK_UTIL_THRESHOLD * 100)}%-Schwelle, ab der eine Maschine als Engpass gilt. Auslastung = Anteil der Zeit, in der aktiv bearbeitet wird (nicht blockiert oder wartend).`,
+      confidence: Math.round(a.confidence * 100) / 100,
+      flowState: 'CONSTRAINT',
+      label: `${rep.id} (${rep.name}) ist der Engpass - passe die Cycle Time an oder füge eine parallele Maschine hinzu, um den Durchsatz zu erhöhen.`,
+      reason: `Erkannt, weil Station ${a.stationId} mit ${Math.round(a.avgUtil * 100)}% Auslastung läuft und kaum blockiert ist.`,
     });
   }
 

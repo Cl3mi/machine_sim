@@ -119,3 +119,60 @@ test('avgQueueWait uses the machine input buffer', () => {
   assert.equal(m.machines.find(x => x.id === 'B').avgQueueWait, 20);
   assert.equal(m.machines.find(x => x.id === 'A').avgQueueWait, 5);
 });
+
+test('a busy, un-blocked station is flagged as the constraint', () => {
+  const state = makeState([
+    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 30 },
+    { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95, blocked: 0 },
+  ]);
+  const m = calculateMetrics(state);
+  const b = m.machines.find(x => x.id === 'B');
+  assert.equal(b.bottleneck, true);
+  assert.equal(b.flowState, 'CONSTRAINT');
+  assert.equal(b.isPrimaryConstraint, true);
+});
+
+test('a busy-but-blocked station is NOT the constraint (it is a downstream victim)', () => {
+  const state = makeState([
+    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 55, blocked: 40 },
+    { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95, blocked: 0 },
+  ]);
+  const m = calculateMetrics(state);
+  const a = m.machines.find(x => x.id === 'A');
+  const b = m.machines.find(x => x.id === 'B');
+  assert.equal(a.bottleneck, false);
+  assert.equal(a.flowState, 'BLOCKED_BY_DOWNSTREAM');
+  assert.equal(b.bottleneck, true);
+  assert.equal(b.isPrimaryConstraint, true);
+});
+
+test('the last station can be the constraint even with no downstream', () => {
+  const state = makeState([
+    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 30 },
+    { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 90, blocked: 0 },
+  ]);
+  const m = calculateMetrics(state);
+  assert.equal(m.machines.find(x => x.id === 'B').bottleneck, true);
+});
+
+test('a starved-but-not-busy station is classified STARVED_BY_UPSTREAM', () => {
+  const state = makeState([
+    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 95, blocked: 0 },
+    { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 20, blocked: 0, starved: 80 },
+  ]);
+  const m = calculateMetrics(state);
+  const b = m.machines.find(x => x.id === 'B');
+  assert.equal(b.bottleneck, false);
+  assert.equal(b.flowState, 'STARVED_BY_UPSTREAM');
+});
+
+test('two un-blocked busy stations are ranked by confidence, primary = highest', () => {
+  const state = makeState([
+    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 70, blocked: 0 },
+    { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: 'BUF2', proc: 95, blocked: 0 },
+    { id: 'C', stationId: 'S3', inputBufferId: 'BUF2', outputBufferId: null,   proc: 30, blocked: 0, starved: 70 },
+  ], { BUF1: { load: 3, capacity: 3 } });
+  const m = calculateMetrics(state);
+  assert.equal(m.machines.find(x => x.id === 'B').isPrimaryConstraint, true);
+  assert.equal(m.machines.find(x => x.id === 'A').isPrimaryConstraint, false);
+});
