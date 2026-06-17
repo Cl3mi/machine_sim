@@ -613,9 +613,8 @@ g[id^="elem-M"]:hover .machine-rect:not(.selected):not(.bottleneck) {
 /* ── Spawn suggestion banner ─────────────────────────────────────────────── */
 #suggestion-banner {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  gap: 8px;
   padding: 10px 16px;
   background: #7c2d12;
   border-bottom: 1px solid #f97316;
@@ -624,6 +623,12 @@ g[id^="elem-M"]:hover .machine-rect:not(.selected):not(.bottleneck) {
   font-weight: 600;
 }
 #suggestion-banner[hidden] { display: none; }
+#suggestion-banner .sg-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
 #suggestion-banner .sg-btn {
   background: #f97316;
   color: #1a1d27;
