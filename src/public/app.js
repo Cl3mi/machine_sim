@@ -945,18 +945,23 @@ function resetParticles() {
 function updateSuggestionBanner(metrics) {
   const banner = document.getElementById('suggestion-banner');
   if (!banner) return;
-  const s = metrics?.suggestion;
-  if (!s) {
+  const suggestions = metrics?.suggestions ?? [];
+  if (suggestions.length === 0) {
     banner.hidden = true;
     banner.innerHTML = '';
     return;
   }
   banner.hidden = false;
-  banner.innerHTML =
-    `<span class="sg-text">⚠ ${s.label}</span>` +
-    `<button class="sg-btn" id="sg-spawn" type="button">+ Parallele Maschine hinzufügen</button>`;
-  document.getElementById('sg-spawn').addEventListener('click', () => {
-    postControl({ stationId: s.stationId }, 'spawnMachine');
+  banner.innerHTML = suggestions.map((s, i) =>
+    `<div class="sg-row">` +
+      `<span class="sg-text">⚠ ${s.label}</span>` +
+      `<button class="sg-btn" data-station="${s.stationId}" data-idx="${i}" type="button">+ Parallele Maschine hinzufügen</button>` +
+    `</div>`
+  ).join('');
+  banner.querySelectorAll('.sg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      postControl({ stationId: btn.dataset.station }, 'spawnMachine');
+    });
   });
 }
 
