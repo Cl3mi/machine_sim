@@ -109,7 +109,7 @@ export function calculateMetrics(state) {
   });
 
   const suggestions = [];
-  for (const { stationId } of bottleneckStations) {
+  for (const { stationId, avgUtil } of bottleneckStations) {
     const stationMachines = machineMetrics.filter(mm => mm.stationId === stationId);
     if (stationMachines.length >= MAX_MACHINES_PER_STATION) continue;
     const rep = stationMachines[0];
@@ -117,7 +117,10 @@ export function calculateMetrics(state) {
       type: 'add-parallel-machine',
       stationId,
       machineId: rep.id,
+      avgUtil,
+      threshold: BOTTLENECK_UTIL_THRESHOLD,
       label: `${rep.id} (${rep.name}) ist ein Engpass - passe die Cycle Time an oder füge eine parallele Maschine hinzu, um den Durchsatz zu erhöhen.`,
+      reason: `Erkannt, weil Station ${stationId} mit ${Math.round(avgUtil * 100)}% Auslastung läuft — über der ${Math.round(BOTTLENECK_UTIL_THRESHOLD * 100)}%-Schwelle, ab der eine Maschine als Engpass gilt. Auslastung = Anteil der Zeit, in der aktiv bearbeitet wird (nicht blockiert oder wartend).`,
     });
   }
 

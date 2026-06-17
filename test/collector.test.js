@@ -53,6 +53,21 @@ test('multiple saturated stations are all flagged, suggested worst-first', () =>
   assert.deepEqual(m.suggestions.map(s => s.stationId), ['S2', 'S1']);
 });
 
+test('each suggestion carries a reason with util % and threshold %, plus raw avgUtil', () => {
+  const state = makeState([
+    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 30 },
+    { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95 },
+  ]);
+  const m = calculateMetrics(state);
+  const sug = m.suggestions[0];                 // S2 @ 0.95
+  assert.equal(typeof sug.reason, 'string');
+  assert.match(sug.reason, /95%/);              // this station's utilization
+  assert.match(sug.reason, /60%/);              // the threshold
+  assert.match(sug.reason, /S2/);               // names the station
+  assert.ok(sug.avgUtil > 0.6);
+  assert.equal(sug.threshold, 0.6);
+});
+
 test('empty suggestions when no station exceeds the utilization threshold', () => {
   const state = makeState([
     { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 20 },
