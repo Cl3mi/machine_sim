@@ -14,6 +14,13 @@
  *   - throughput       → "Produktionsrate"
  */
 
+// A station whose average machine utilization exceeds this is treated as the
+// line's constraint (bottleneck). Tunable.
+const BOTTLENECK_UTIL_THRESHOLD = 0.6;
+// Keep in sync with engine MAX_MACHINES_PER_STATION — no point suggesting a
+// spawn for a station that is already full.
+const MAX_MACHINES_PER_STATION = 4;
+
 /**
  * calculateMetrics(state) → metrics object
  *
@@ -51,22 +58,21 @@ export function calculateMetrics(state) {
   const partsInSystem   = partsInBuffers + partsInMachines;
 
   // ── Per-machine metrics ────────────────────────────────────────────────────
+  const bufferById = {};
+  for (const b of buffers) bufferById[b.id] = b;
+
   const machineMetrics = machines.map(m => {
     const totalTicks = m.ticksProcessing + m.ticksBlocked + m.ticksStarved + m.ticksIdle;
-    const utilization = totalTicks > 0
-      ? m.ticksProcessing / totalTicks
-      : 0;
+    const utilization = totalTicks > 0 ? m.ticksProcessing / totalTicks : 0;
 
-    // Average queue wait: accumulated wait ticks / parts that left the upstream buffer
-    // We need the upstream buffer for this machine. M1=BUF0, M2=BUF1, M3=BUF2, M4=BUF3
-    const machineIndex    = machines.indexOf(m);
-    const upstreamBuffer  = buffers[machineIndex] ?? null;
-    const avgQueueWait    = upstreamBuffer && upstreamBuffer.totalPartsOut > 0
+    const upstreamBuffer = bufferById[m.inputBufferId] ?? null;
+    const avgQueueWait   = upstreamBuffer && upstreamBuffer.totalPartsOut > 0
       ? upstreamBuffer.totalWaitTicks / upstreamBuffer.totalPartsOut
       : 0;
 
     return {
       id:           m.id,
+      stationId:    m.stationId,
       name:         m.name,
       utilization,
       avgQueueWait,
@@ -77,30 +83,46 @@ export function calculateMetrics(state) {
     };
   });
 
-  // ── Bottleneck detection ───────────────────────────────────────────────────
-  // The bottleneck is the machine with the highest ratio of (blocked + starved)
-  // ticks relative to total runtime. A machine that is either waiting for
-  // upstream parts OR holding finished parts because downstream is full is the
-  // constraint on the whole line.
-  let maxConstraintRatio = -1;
-  let bottleneckIndex    = -1;
-
-  machineMetrics.forEach((m, i) => {
-    const raw = machines[i];
-    const totalTicks = raw.ticksProcessing + raw.ticksBlocked + raw.ticksStarved + raw.ticksIdle;
-    if (totalTicks === 0) return;
-    // Use blocked time as the primary bottleneck signal:
-    // A machine that is frequently BLOCKED is producing faster than downstream can consume.
-    const ratio = raw.ticksBlocked / totalTicks;
-    if (ratio > maxConstraintRatio) {
-      maxConstraintRatio = ratio;
-      bottleneckIndex    = i;
-    }
+  // ── Bottleneck detection (station-level, utilization-based) ─────────────────
+  // The constraint is the busiest STATION: the one whose machines spend the
+  // largest share of time PROCESSING. (The previous blocked-ratio heuristic
+  // flagged the machine *upstream* of the constraint — the wrong place to add
+  // capacity.) Adding a parallel machine lowers per-machine utilization, so the
+  // flagged bottleneck moves — the intended teaching feedback.
+  const stationStats = new Map();   // stationId -> { utilSum, count }
+  machineMetrics.forEach(mm => {
+    const s = stationStats.get(mm.stationId) ?? { utilSum: 0, count: 0 };
+    s.utilSum += mm.utilization;
+    s.count   += 1;
+    stationStats.set(mm.stationId, s);
   });
 
-  // Only mark as bottleneck if it has meaningful blocked time (>5% of runtime)
-  if (bottleneckIndex >= 0 && maxConstraintRatio > 0.05) {
-    machineMetrics[bottleneckIndex].bottleneck = true;
+  let bottleneckStationId = null;
+  let maxStationUtil      = -1;
+  for (const [stationId, s] of stationStats) {
+    const avgUtil = s.count > 0 ? s.utilSum / s.count : 0;
+    if (avgUtil > maxStationUtil) {
+      maxStationUtil      = avgUtil;
+      bottleneckStationId = stationId;
+    }
+  }
+
+  let suggestion = null;
+  if (bottleneckStationId != null && maxStationUtil > BOTTLENECK_UTIL_THRESHOLD) {
+    machineMetrics.forEach(mm => {
+      if (mm.stationId === bottleneckStationId) mm.bottleneck = true;
+    });
+
+    const stationMachines = machineMetrics.filter(mm => mm.stationId === bottleneckStationId);
+    if (stationMachines.length < MAX_MACHINES_PER_STATION) {
+      const rep = stationMachines[0];
+      suggestion = {
+        type: 'add-parallel-machine',
+        stationId: bottleneckStationId,
+        machineId: rep.id,
+        label: `${rep.id} (${rep.name}) ist der Engpass — füge 1 parallele Maschine hinzu, um den Durchsatz zu erhöhen.`,
+      };
+    }
   }
 
   // ── Buffer metrics ─────────────────────────────────────────────────────────
@@ -119,5 +141,6 @@ export function calculateMetrics(state) {
     buffers:       bufferMetrics,
     simTime:       tick,
     partsInSystem,
+    suggestion,
   };
 }
