@@ -14,9 +14,21 @@
  *   - throughput       → "Produktionsrate"
  */
 
-// A station whose average machine utilization exceeds this is treated as the
-// line's constraint (bottleneck). Tunable.
+// A station whose average machine utilization exceeds this is "busy" — the
+// first gate for being the line's constraint. Tunable.
 const BOTTLENECK_UTIL_THRESHOLD = 0.6;
+// A station blocked more than this fraction of the time is a *victim* of a
+// downstream constraint, not the constraint itself — it fails the second gate.
+const BLOCKED_MAX = 0.05;
+// A station starved at least this fraction of the time is "starved"; also used
+// for the source-starved diagnostic and the STARVED_BY_UPSTREAM classification.
+const STARVED_MIN = 0.10;
+// Confidence-score weights (sum to 1): utilization, un-blockedness, downstream
+// starvation, upstream buffer fill.
+const W_UTIL   = 0.4;
+const W_BLOCK  = 0.2;
+const W_STARVE = 0.2;
+const W_FILL   = 0.2;
 // Keep in sync with engine MAX_MACHINES_PER_STATION — no point suggesting a
 // spawn for a station that is already full.
 const MAX_MACHINES_PER_STATION = 4;
@@ -63,7 +75,9 @@ export function calculateMetrics(state) {
 
   const machineMetrics = machines.map(m => {
     const totalTicks = m.ticksProcessing + m.ticksBlocked + m.ticksStarved + m.ticksIdle;
-    const utilization = totalTicks > 0 ? m.ticksProcessing / totalTicks : 0;
+    const utilization  = totalTicks > 0 ? m.ticksProcessing / totalTicks : 0;
+    const blockedRatio = totalTicks > 0 ? m.ticksBlocked    / totalTicks : 0;
+    const starvedRatio = totalTicks > 0 ? m.ticksStarved    / totalTicks : 0;
 
     const upstreamBuffer = bufferById[m.inputBufferId] ?? null;
     const avgQueueWait   = upstreamBuffer && upstreamBuffer.totalPartsOut > 0
@@ -78,8 +92,12 @@ export function calculateMetrics(state) {
       avgQueueWait,
       blockedTime:  m.ticksBlocked,
       starvedTime:  m.ticksStarved,
+      blockedRatio,                 // own ratio, 0–1
+      starvedRatio,                 // own ratio, 0–1
       currentState: m.state,
-      bottleneck:   false, // filled in below
+      bottleneck:          false,   // filled in by detection below
+      flowState:           'BALANCED',
+      isPrimaryConstraint: false,
     };
   });
 

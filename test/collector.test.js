@@ -2,23 +2,41 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateMetrics } from '../src/metrics/collector.js';
 
-// Build a minimal state snapshot. Each machine spec: id, stationId, inputBufferId,
-// outputBufferId, proc (ticksProcessing); total ticks fixed at 100.
-function makeState(machineSpecs) {
+// Build a minimal state snapshot from machine specs.
+// Spec fields: { id, stationId, inputBufferId, outputBufferId?, proc,
+//                blocked?, starved?, name? }. Total ticks fixed at 100;
+//   starved defaults to (100 - proc - blocked).
+// Buffers are derived from the ids the machines reference. Override a buffer's
+// capacity/load/wait via `bufferOverrides`, e.g. { BUF1: { load: 3, capacity: 3 } }.
+function makeState(machineSpecs, bufferOverrides = {}) {
+  const bufferIds = new Set();
+  for (const s of machineSpecs) {
+    if (s.inputBufferId)  bufferIds.add(s.inputBufferId);
+    if (s.outputBufferId) bufferIds.add(s.outputBufferId);
+  }
+  const buffers = [...bufferIds].map(id => ({
+    id,
+    capacity:       bufferOverrides[id]?.capacity ?? 4,
+    load:           bufferOverrides[id]?.load ?? 0,
+    totalWaitTicks: bufferOverrides[id]?.totalWaitTicks ?? 0,
+    totalPartsOut:  bufferOverrides[id]?.totalPartsOut ?? 1,
+  }));
   return {
     tick: 100,
-    machines: machineSpecs.map(s => ({
-      id: s.id, stationId: s.stationId, name: s.name ?? s.id,
-      inputBufferId: s.inputBufferId, outputBufferId: s.outputBufferId ?? null,
-      state: 'PROCESSING', currentPartId: 1, cycleTime: 5, rejectRate: 0,
-      ticksProcessing: s.proc, ticksBlocked: s.blocked ?? 0,
-      ticksStarved: s.starved ?? (100 - s.proc - (s.blocked ?? 0)), ticksIdle: 0,
-      partsProcessed: s.proc,
-    })),
-    buffers: [
-      { id: 'BUF0', capacity: 4, load: 0, totalWaitTicks: 50, totalPartsOut: 10 },
-      { id: 'BUF1', capacity: 4, load: 0, totalWaitTicks: 200, totalPartsOut: 10 },
-    ],
+    machines: machineSpecs.map(s => {
+      const proc    = s.proc;
+      const blocked = s.blocked ?? 0;
+      const starved = s.starved ?? (100 - proc - blocked);
+      return {
+        id: s.id, stationId: s.stationId, name: s.name ?? s.id,
+        inputBufferId: s.inputBufferId, outputBufferId: s.outputBufferId ?? null,
+        state: 'PROCESSING', currentPartId: 1, cycleTime: 5, rejectRate: 0,
+        ticksProcessing: proc, ticksBlocked: blocked,
+        ticksStarved: starved, ticksIdle: 0,
+        partsProcessed: proc,
+      };
+    }),
+    buffers,
     sink: { partsReceived: 10, recentParts: [] },
     scrap: { partsReceived: 0 },
   };
