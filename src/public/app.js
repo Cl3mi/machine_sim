@@ -89,7 +89,10 @@ function computeLayout(state) {
     }
   }
 
-  // Scrap sink sits below the lowest element, under the rejecting station.
+  // Scrap sink sits below the lowest element, under the first rejecting station.
+  // There is a single shared scrap sink even when several stations are quality
+  // gates; each gate still gets its own scrap connector below, the sink just
+  // anchors under the first one.
   const rejectCol = columns.find(c => c.kind === 'station' && c.machines.some(m => m.rejectRate > 0));
   const scrapY = maxY + 40;
   const scrapX = rejectCol ? rejectCol.x : totalW / 2;
@@ -978,6 +981,9 @@ function updateSuggestionBanner(metrics) {
 // Group machines by station in pipeline (first-appearance) order, sorted within
 // a station by id, so parallel machines (M3, M3b, M3c) stay together instead of
 // appearing in raw config order (where spawns are appended after later stations).
+// Assumes the original station machines appear in pipeline order in the array
+// (true for the current linear config); for a non-linear line, derive order from
+// the buffer chain instead (see engine.js _assignStationOrder).
 function orderedMachines(machines) {
   const stationFirstIndex = new Map();
   machines.forEach((m, i) => {
