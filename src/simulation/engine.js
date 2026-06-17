@@ -5,7 +5,8 @@
  * Architecture:
  *   - Each "tick" advances the simulation clock by 1 unit of simulated time.
  *   - Processing order within a tick: advance machines → pull/push parts → update states.
- *   - We process from the END of the line to the START each tick. This prevents
+ *   - Machines are processed in descending station order (downstream stations
+ *     before upstream ones), computed by walking the buffer graph. This prevents
  *     a part from moving through multiple stations in a single tick (the "domino effect"
  *     that would make a short line appear to have infinite throughput).
  *

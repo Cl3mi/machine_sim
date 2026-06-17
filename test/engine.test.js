@@ -23,10 +23,16 @@ test('regression: default line still produces parts at the Sink', () => {
   assert.ok(engine.sink.partsReceived > 0, 'default line completed no parts');
 });
 
-test('domino prevention: a freshly emitted part cannot reach the Sink in one tick', () => {
+test('domino prevention: a part traverses two stations over multiple ticks (no single-tick cascade)', () => {
   const engine = new SimulationEngine(twoStationConfig(1, 1));
+  // The first part cannot cascade through both machines in one tick.
   engine._tick();
-  assert.equal(engine.sink.partsReceived, 0);
+  assert.equal(engine.sink.partsReceived, 0, 'reached sink too early after 1 tick');
+  engine._tick();
+  assert.equal(engine.sink.partsReceived, 0, 'reached sink too early after 2 ticks');
+  // By tick 3 the first part has cleared both stations and reached the Sink.
+  engine._tick();
+  assert.ok(engine.sink.partsReceived >= 1, 'first part should reach the Sink by tick 3');
 });
 
 test('getState machines expose stationId + buffer wiring', () => {
