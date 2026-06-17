@@ -120,7 +120,7 @@ export function calculateMetrics(state) {
         type: 'add-parallel-machine',
         stationId: bottleneckStationId,
         machineId: rep.id,
-        label: `${rep.id} (${rep.name}) ist der Engpass — füge 1 parallele Maschine hinzu, um den Durchsatz zu erhöhen.`,
+        label: `${rep.id} (${rep.name}) ist ein Engpass - passe die Cycle Time an oder füge eine parallele Maschine hinzu, um den Durchsatz zu erhöhen.`,
       };
     }
   }
