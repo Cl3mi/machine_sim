@@ -160,6 +160,35 @@ export class SimulationEngine extends EventEmitter {
     return { ok: true, id: newId };
   }
 
+  // Remove a spawned parallel machine. The station's original machine (first in
+  // config order) cannot be removed. If the machine holds a part, the part is
+  // returned to the head of its input buffer; if that buffer is full the part is
+  // dropped. Returns { ok, reason? }.
+  removeMachine({ machineId } = {}) {
+    const machine = this.machines.find(m => m.id === machineId);
+    if (!machine) return { ok: false, reason: 'unknown-machine' };
+
+    const stationMachines = this.machines.filter(m => m.stationId === machine.stationId);
+    if (stationMachines[0].id === machineId) {
+      return { ok: false, reason: 'original-machine' };
+    }
+
+    if (machine.currentPart) {
+      const buf = this._bufferById.get(machine.inputBufferId);
+      if (buf && buf.parts.length < buf.capacity) {
+        machine.currentPart._bufferEnterTick = this.tick;
+        buf.parts.unshift(machine.currentPart);
+      }
+      machine.currentPart = null;
+    }
+
+    this.machines = this.machines.filter(m => m.id !== machineId);
+    this._config.machines = this._config.machines.filter(m => m.id !== machineId);
+    this._reindex();
+
+    return { ok: true };
+  }
+
   // Returns the per-tick history recorded since the last reset.
   // Each entry is a flat object — one row per simulated tick — suitable for
   // direct CSV/JSON export.

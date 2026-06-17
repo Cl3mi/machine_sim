@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SimulationEngine } from '../src/simulation/engine.js';
+import { MachineState } from '../src/simulation/entities.js';
 
 // A deterministic 2-station line with no rejects: Source→BUF0→S1→BUF1→S2→Sink.
 function twoStationConfig(s1Cycle = 2, s2Cycle = 6) {
@@ -85,4 +86,35 @@ test('a second machine increases a bottleneck station throughput', () => {
   runTicks(dbl, 600);
   assert.ok(dbl.sink.partsReceived > single,
     `expected parallel station to finish more parts (${dbl.sink.partsReceived} vs ${single})`);
+});
+
+test('removeMachine deletes a spawned machine', () => {
+  const engine = new SimulationEngine(twoStationConfig());
+  engine.spawnMachine({ stationId: 'S2' });   // Bb
+  const res = engine.removeMachine({ machineId: 'Bb' });
+  assert.equal(res.ok, true);
+  assert.equal(engine.machines.filter(m => m.stationId === 'S2').length, 1);
+  assert.ok(!engine._config.machines.some(m => m.id === 'Bb'));
+});
+
+test('removeMachine refuses to remove the original station machine', () => {
+  const engine = new SimulationEngine(twoStationConfig());
+  engine.spawnMachine({ stationId: 'S2' });   // Bb exists, B is original
+  const res = engine.removeMachine({ machineId: 'B' });
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, 'original-machine');
+});
+
+test('removeMachine returns a held part to its input buffer', () => {
+  const engine = new SimulationEngine(twoStationConfig());
+  engine.spawnMachine({ stationId: 'S2' });   // Bb
+  const bb = engine.machines.find(m => m.id === 'Bb');
+  const buf1 = engine._bufferById.get('BUF1');
+  // Give Bb a part to hold and empty the buffer.
+  bb.currentPart = { id: 999, _bufferEnterTick: 0 };
+  bb.state = MachineState.PROCESSING;
+  buf1.parts = [];
+  engine.removeMachine({ machineId: 'Bb' });
+  assert.equal(buf1.parts.length, 1);
+  assert.equal(buf1.parts[0].id, 999);
 });
