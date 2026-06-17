@@ -115,6 +115,8 @@ export function calculateMetrics(state) {
     const totalTicks = mc.ticksProcessing + mc.ticksBlocked + mc.ticksStarved + mc.ticksIdle;
     const a = stationAgg.get(mc.stationId) ?? {
       stationId: mc.stationId, proc: 0, blocked: 0, starved: 0, total: 0,
+      // Parallel machines in a station share one input and one output buffer,
+      // so the first machine's buffer ids represent the whole station.
       inputBufferId: mc.inputBufferId, outputBufferId: mc.outputBufferId,
     };
     a.proc    += mc.ticksProcessing;
@@ -147,6 +149,9 @@ export function calculateMetrics(state) {
     const notBlocked = a.blockedRatio < BLOCKED_MAX;
     a.isConstraint = busy && notBlocked;
     if (!a.isConstraint) continue;
+    // A constraint paces everything after it, so a starved downstream is a
+    // positive signal. The last station has no downstream to starve, so treat
+    // its absence as a full positive signal (1) rather than missing evidence.
     const starveTerm = a.downstream ? clamp(a.downstream.starvedRatio) : 1;
     a.confidence =
         W_UTIL   * clamp(a.avgUtil)
