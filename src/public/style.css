@@ -609,3 +609,34 @@ g[id^="elem-M"]:hover .machine-rect:not(.selected):not(.bottleneck) {
 }
 .particle-tail.scrap { fill: var(--blocked); }
 .particle-tail.hidden { visibility: hidden; }
+
+/* ── Spawn suggestion banner ─────────────────────────────────────────────── */
+#suggestion-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #7c2d12;
+  border-bottom: 1px solid #f97316;
+  color: #fdba74;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+#suggestion-banner[hidden] { display: none; }
+#suggestion-banner .sg-btn {
+  background: #f97316;
+  color: #1a1d27;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* ── Machine-detail station controls ─────────────────────────────────────── */
+.md-station-controls {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 10px;
+}
+.md-station-controls #md-spawn  { background: var(--processing); color: #fff; }
+.md-station-controls #md-remove { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+.md-station-controls button:disabled { opacity: 0.4; cursor: not-allowed; }

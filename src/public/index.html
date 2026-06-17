@@ -21,6 +21,7 @@
 
   <!-- ── Pipeline visualisation ──────────────────────────────────────────── -->
   <div id="pipeline-container">
+    <div id="suggestion-banner" hidden></div>
     <svg id="pipeline-svg" viewBox="0 0 1200 300" preserveAspectRatio="xMidYMid meet"></svg>
 
     <!-- Machine detail panel (overlay, opened by clicking a machine) -->
@@ -33,6 +34,10 @@
         </div>
         <button class="md-close" id="md-close" aria-label="Close detail panel">&times;</button>
       </header>
+      <div class="md-station-controls">
+        <button id="md-spawn" type="button">+ Parallele Maschine</button>
+        <button id="md-remove" type="button">– Maschine entfernen</button>
+      </div>
 
       <div class="md-state-row">
         <div class="md-state-group">

@@ -153,6 +153,8 @@ app.post('/api/control', async (req) => {
     case 'pause':           engine.pause();           break;
     case 'reset':           engine.reset();           break;
     case 'resetToDefaults': engine.resetToDefaults(); break;
+    case 'spawnMachine':    engine.spawnMachine(params);  break;
+    case 'removeMachine':   engine.removeMachine(params); break;
     default:
       // No recognised action — may still have params to update
   }

@@ -113,6 +113,13 @@ export function updateMetrics(engineState) {
   gScrappedParts.set(m.scrappedParts);
   gSimTime.set(m.simTime);
 
+  // Clear per-machine series so removed machines don't linger as stale labels.
+  gMachineUtilization.reset();
+  gMachineBlockedTime.reset();
+  gMachineStarvedTime.reset();
+  gMachineAvgQueueWait.reset();
+  gMachineBottleneck.reset();
+
   for (const machine of m.machines) {
     const labels = { machine_id: machine.id, machine_name: machine.name };
     gMachineUtilization.set(labels,     machine.utilization);
