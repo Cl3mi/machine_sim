@@ -201,7 +201,29 @@ export function calculateMetrics(state) {
       confidence: Math.round(a.confidence * 100) / 100,
       flowState: 'CONSTRAINT',
       label: `${rep.id} (${rep.name}) ist der Engpass - passe die Cycle Time an oder füge eine parallele Maschine hinzu, um den Durchsatz zu erhöhen.`,
-      reason: `Erkannt, weil Station ${a.stationId} mit ${Math.round(a.avgUtil * 100)}% Auslastung läuft und kaum blockiert ist.`,
+      reason: (() => {
+        const util  = Math.round(a.avgUtil * 100);
+        const block = Math.round(a.blockedRatio * 100);
+        const fill  = Math.round(a.inputFill * 100);
+        const downClause = a.downstream
+          ? ` und die nachgelagerte Station wartet (${Math.round(a.downstream.starvedRatio * 100)}% Leerlauf)`
+          : ' (letzte Station der Linie)';
+        return `Erkannt, weil Station ${a.stationId} der Engpass ist: ${util}% Auslastung, `
+             + `nur ${block}% blockiert${downClause} — Teile stauen sich davor `
+             + `(Eingangspuffer ${fill}% voll). Ein blockierter Standort wäre dagegen `
+             + `nur Opfer eines nachgelagerten Engpasses.`;
+      })(),
+    });
+  }
+
+  // Diagnostic note: no internal constraint, but the line is supply-limited or
+  // everything is blocked. Emitted only when no station passed the gates.
+  if (constraints.length === 0 && (sourceStarved || anyBusy)) {
+    suggestions.push({
+      type: 'no-internal-constraint',
+      reason: 'Kein interner Engpass — die Linie wird von der Quelle / der '
+            + 'Ankunftsrate begrenzt (oder staut sich an einem nachgelagerten '
+            + 'Engpass zurück).',
     });
   }
 

@@ -57,56 +57,66 @@ test('a single saturated station is flagged and gets one suggestion', () => {
   assert.match(m.suggestions[0].label, /B/);
 });
 
-test('multiple saturated stations are all flagged, suggested worst-first', () => {
+test('multiple un-blocked constraints are suggested highest-confidence first', () => {
   const state = makeState([
-    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 70 },
-    { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95 },
+    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 70, blocked: 0 },
+    { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95, blocked: 0 },
   ]);
   const m = calculateMetrics(state);
-  // Both stations exceed the 0.6 threshold (0.70 and 0.95).
-  assert.equal(m.machines.find(x => x.id === 'A').bottleneck, true);
-  assert.equal(m.machines.find(x => x.id === 'B').bottleneck, true);
-  // Two suggestions, busiest station (S2, 0.95) first.
   assert.equal(m.suggestions.length, 2);
   assert.deepEqual(m.suggestions.map(s => s.stationId), ['S2', 'S1']);
+  assert.ok(m.suggestions[0].confidence >= m.suggestions[1].confidence);
+  assert.equal(m.suggestions[0].flowState, 'CONSTRAINT');
 });
 
-test('each suggestion carries a reason with util % and threshold %, plus raw avgUtil', () => {
+test('a source-starved line yields no bottleneck and a diagnostic note', () => {
   const state = makeState([
-    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 30 },
-    { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95 },
+    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 20, blocked: 0, starved: 80 },
+    { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 25, blocked: 0, starved: 75 },
   ]);
   const m = calculateMetrics(state);
-  const sug = m.suggestions[0];                 // S2 @ 0.95
-  assert.equal(typeof sug.reason, 'string');
-  assert.match(sug.reason, /95%/);              // this station's utilization
-  assert.match(sug.reason, /60%/);              // the threshold
-  assert.match(sug.reason, /S2/);               // names the station
-  assert.ok(sug.avgUtil > 0.6);
-  assert.equal(sug.threshold, 0.6);
-});
-
-test('empty suggestions when no station exceeds the utilization threshold', () => {
-  const state = makeState([
-    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 20 },
-    { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 25 },
-  ]);
-  const m = calculateMetrics(state);
-  assert.deepEqual(m.suggestions, []);
   assert.ok(m.machines.every(x => x.bottleneck === false));
+  assert.equal(m.suggestions.length, 1);
+  assert.equal(m.suggestions[0].type, 'no-internal-constraint');
+  assert.equal(m.suggestions[0].machineId, undefined);
 });
 
-test('saturated station at the cap is flagged but yields no suggestion', () => {
+test('an everything-blocked line yields a diagnostic note', () => {
+  const state = makeState([
+    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 65, blocked: 35 },
+    { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 65, blocked: 35 },
+  ]);
+  const m = calculateMetrics(state);
+  assert.ok(m.machines.every(x => x.bottleneck === false));
+  assert.equal(m.suggestions.length, 1);
+  assert.equal(m.suggestions[0].type, 'no-internal-constraint');
+});
+
+test('a constraint at the machine cap is flagged but yields no spawn suggestion', () => {
   const state = makeState([
     { id: 'A',  stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 30 },
-    { id: 'B',  stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95 },
-    { id: 'Bb', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95 },
-    { id: 'Bc', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95 },
-    { id: 'Bd', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95 },
+    { id: 'B',  stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95, blocked: 0 },
+    { id: 'Bb', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95, blocked: 0 },
+    { id: 'Bc', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95, blocked: 0 },
+    { id: 'Bd', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95, blocked: 0 },
   ]);
   const m = calculateMetrics(state);
   assert.ok(m.machines.find(x => x.id === 'B').bottleneck);
   assert.deepEqual(m.suggestions, []);
+});
+
+test('each spawn suggestion carries confidence, threshold, and a flow-aware reason', () => {
+  const state = makeState([
+    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 30 },
+    { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95, blocked: 0 },
+  ]);
+  const m = calculateMetrics(state);
+  const sug = m.suggestions[0];
+  assert.equal(sug.threshold, 0.6);
+  assert.equal(typeof sug.confidence, 'number');
+  assert.match(sug.reason, /S2/);
+  assert.match(sug.reason, /95%/);
+  assert.match(sug.reason, /blockiert/);
 });
 
 test('avgQueueWait uses the machine input buffer', () => {
