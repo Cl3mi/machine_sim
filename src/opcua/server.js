@@ -111,6 +111,7 @@ function _updateNodes(vars, state) {
   vars.sim.running.setValueFromSource(new Variant({ dataType: DataType.Boolean, value: state.running }));
   const metrics = calculateMetrics(state);
   vars.sim.throughput.setValueFromSource(new Variant({ dataType: DataType.Double, value: metrics.throughput }));
-  const bottleneck = metrics.machines.find((m) => m.bottleneck);
+  const bottleneck = metrics.machines.find((m) => m.isPrimaryConstraint)
+                  ?? metrics.machines.find((m) => m.bottleneck);
   vars.sim.bottleneckId.setValueFromSource(new Variant({ dataType: DataType.String, value: bottleneck?.id ?? '' }));
 }

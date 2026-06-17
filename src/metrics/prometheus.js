@@ -86,6 +86,13 @@ const gMachineBottleneck = new Gauge({
   registers: [register],
 });
 
+const gMachinePrimaryConstraint = new Gauge({
+  name: 'plantsim_machine_is_primary_constraint',
+  help: '1 if this machine is the single primary constraint (highest-confidence bottleneck), 0 otherwise',
+  labelNames: ['machine_id', 'machine_name'],
+  registers: [register],
+});
+
 // ── Per-buffer gauges ──────────────────────────────────────────────────────
 
 const gBufferLoad = new Gauge({
@@ -119,6 +126,7 @@ export function updateMetrics(engineState) {
   gMachineStarvedTime.reset();
   gMachineAvgQueueWait.reset();
   gMachineBottleneck.reset();
+  gMachinePrimaryConstraint.reset();
 
   for (const machine of m.machines) {
     const labels = { machine_id: machine.id, machine_name: machine.name };
@@ -127,6 +135,7 @@ export function updateMetrics(engineState) {
     gMachineStarvedTime.set(labels,     machine.starvedTime);
     gMachineAvgQueueWait.set(labels,    machine.avgQueueWait);
     gMachineBottleneck.set(labels,      machine.bottleneck ? 1 : 0);
+    gMachinePrimaryConstraint.set(labels, machine.isPrimaryConstraint ? 1 : 0);
   }
 
   for (const buffer of m.buffers) {
