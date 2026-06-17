@@ -149,9 +149,12 @@ STARVED_BY_UPSTREAM > BALANCED.)
   everything blocked): return **zero bottlenecks** plus one **diagnostic note**
   (see below). This is the honest answer and teaches that not every slow line
   has an internal bottleneck.
-- **Source-starved guard:** if station S1's own `starvedRatio ≥ STARVED_MIN`, the
-  source / arrival rate is the limiter. Suppress flagging downstream stations as
-  the primary constraint and emit the diagnostic note instead.
+- **Source-starved guard:** the diagnostic note is emitted when **no station
+  passes the gates** AND either the first station's own `starvedRatio ≥
+  STARVED_MIN` (source / arrival rate is the limiter) or some station is busy
+  but disqualified (e.g. everything blocked). A genuine internal constraint
+  (busy + not blocked) is always reported and takes precedence — the guard only
+  applies when there is no internal constraint to report.
 
 ## Output Shape
 
