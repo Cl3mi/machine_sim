@@ -9,9 +9,13 @@ export const DEFAULT_CONFIG = {
   // Simulation clock: ticks per second of wall-clock time (affects animation speed)
   ticksPerSecond: 10,
 
-  // Source node: generates one part every `sourceInterval` ticks
+  // Source node: generates one part every `sourceInterval` ticks.
+  // Tuned (with the cycle times below) so M3 Montage is the single clear
+  // bottleneck, and adding ONE parallel machine to M3 fully resolves it without
+  // the constraint shifting to M1: the supply rate is low enough that M1/M2/M4
+  // stay well under the 60% utilization gate once M3's capacity is doubled.
   source: {
-    interval: 3,          // ticks between part generations
+    interval: 9,          // ticks between part generations
     materialStock: 200,   // how many parts can be produced before material runs out (-1 = infinite)
   },
 
@@ -20,7 +24,7 @@ export const DEFAULT_CONFIG = {
   machines: [
     { id: 'M1', stationId: 'S1', name: 'Rohbearbeitung',    cycleTime: 4,                  inputBufferId: 'BUF0', outputBufferId: 'BUF1' },
     { id: 'M2', stationId: 'S2', name: 'Qualitätsprüfung',  cycleTime: 3, rejectRate: 0.10, inputBufferId: 'BUF1', outputBufferId: 'BUF2' },
-    { id: 'M3', stationId: 'S3', name: 'Montage',           cycleTime: 15,                 inputBufferId: 'BUF2', outputBufferId: 'BUF3' },
+    { id: 'M3', stationId: 'S3', name: 'Montage',           cycleTime: 10,                 inputBufferId: 'BUF2', outputBufferId: 'BUF3' },
     { id: 'M4', stationId: 'S4', name: 'Verpackung',        cycleTime: 2,                  inputBufferId: 'BUF3', outputBufferId: null   },
   ],
 
