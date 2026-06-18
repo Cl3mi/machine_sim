@@ -147,8 +147,7 @@ export function calculateMetrics(state) {
   for (const a of stationAgg.values()) {
     const busy       = a.avgUtil > BOTTLENECK_UTIL_THRESHOLD;
     const notBlocked = a.blockedRatio < BLOCKED_MAX;
-    a.isConstraint = busy && notBlocked;
-    if (!a.isConstraint) continue;
+    if (!(busy && notBlocked)) continue;
     // A constraint paces everything after it, so a starved downstream is a
     // positive signal. The last station has no downstream to starve, so treat
     // its absence as a full positive signal (1) rather than missing evidence.
@@ -186,7 +185,6 @@ export function calculateMetrics(state) {
   const anyBusy = [...stationAgg.values()].some(a => a.avgUtil > BOTTLENECK_UTIL_THRESHOLD);
 
   // Suggestions: one spawn per constraint with room, ranked by confidence.
-  // (Reason text + diagnostic note are finished in a later task.)
   const suggestions = [];
   for (const a of constraints) {
     const stationMachines = machineMetrics.filter(mm => mm.stationId === a.stationId);
