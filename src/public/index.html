@@ -16,6 +16,7 @@
       <div class="status-dot" id="status-dot"></div>
       <span id="status-label">Paused</span>
       <span>Tick: <strong id="tick-counter">0</strong></span>
+      <span>Zeit: <strong id="time-counter">0.0</strong> s</span>
     </div>
   </header>
 
@@ -97,6 +98,12 @@
 
   <!-- ── Controls ────────────────────────────────────────────────────────── -->
   <section id="controls">
+    <!-- Start prompt: shown on initial load (sim paused, not yet started) -->
+    <div id="start-banner" hidden>
+      <span class="start-banner-text">&#9654; Simulation bereit &ndash; noch nicht gestartet.</span>
+      <button id="btn-start" type="button">&#9654; Simulation starten</button>
+    </div>
+
     <!-- Playback controls -->
     <div class="controls-row">
       <span class="section-label">Simulation Control</span>

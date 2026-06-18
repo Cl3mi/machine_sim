@@ -7,6 +7,9 @@
  * update the DOM on each push.
  */
 
+import { shouldFreezeParticles, shouldShowStartBanner } from './sim-status.js';
+import { suggestionSignature } from './suggestions-view.js';
+
 // ── Layout constants (SVG coordinate system: 0 0 1400 300) ──────────────────
 
 const SVG_W  = 1200;
@@ -486,6 +489,10 @@ function updatePipeline(state, metrics) {
 
   // ── Header tick ────────────────────────────────────────────────────────────
   setTextContent('tick-counter', state.tick);
+  // Simulated elapsed time in seconds = ticks / ticksPerSecond (independent of the
+  // wall-clock speed multiplier). Falls back to 10 tps if the field is absent.
+  const tps = state.ticksPerSecond || 10;
+  setTextContent('time-counter', (state.tick / tps).toFixed(1));
   const dot   = document.getElementById('status-dot');
   const label = document.getElementById('status-label');
   if (dot && label) {
@@ -497,6 +504,10 @@ function updatePipeline(state, metrics) {
       label.textContent = 'Paused';
     }
   }
+
+  // ── Start banner (shown only before the run has begun) ──────────────────────
+  const startBanner = document.getElementById('start-banner');
+  if (startBanner) startBanner.hidden = !shouldShowStartBanner(state);
 }
 
 function updateBufferSlots(buf) {
@@ -964,10 +975,21 @@ function escapeAttr(str) {
     .replace(/>/g, '&gt;');
 }
 
+let lastSuggestionSig = null;
+
 function updateSuggestionBanner(metrics) {
   const banner = document.getElementById('suggestion-banner');
   if (!banner) return;
   const suggestions = metrics?.suggestions ?? [];
+
+  // Skip the rebuild when the set of suggestions is structurally unchanged, so
+  // the spawn button isn't destroyed and recreated every SSE frame (which would
+  // eat clicks that land mid-rebuild). Live numbers in the tooltip refresh on
+  // the next structural change.
+  const sig = suggestionSignature(suggestions);
+  if (sig === lastSuggestionSig) return;
+  lastSuggestionSig = sig;
+
   if (suggestions.length === 0) {
     banner.hidden = true;
     banner.innerHTML = '';
@@ -1075,6 +1097,7 @@ async function postControl(params, action) {
 
 document.getElementById('btn-play').addEventListener('click', () => postControl({}, 'play'));
 document.getElementById('btn-pause').addEventListener('click', () => postControl({}, 'pause'));
+document.getElementById('btn-start')?.addEventListener('click', () => postControl({}, 'play'));
 
 async function applyReset(action) {
   await postControl({}, action);
@@ -1160,7 +1183,9 @@ function connectSSE() {
     if (transfers.length > 0) spawnFromEvents(transfers);
     prevStateForDiff  = state;
     particleSimState  = state;
-    particleSimPaused = !state.running;
+    // Freeze in-flight dots while paused for inspection, but NOT once the run has
+    // finished — let the final transfers glide out so no dots linger on the line.
+    particleSimPaused = shouldFreezeParticles(state);
 
     updatePipeline(state, metrics);
     updateMetricsDashboard(metrics, state);
