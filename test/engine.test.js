@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SimulationEngine } from '../src/simulation/engine.js';
 import { MachineState } from '../src/simulation/entities.js';
+import { calculateMetrics } from '../src/metrics/collector.js';
 
 // A deterministic 2-station line with no rejects: Source→BUF0→S1→BUF1→S2→Sink.
 function twoStationConfig(s1Cycle = 2, s2Cycle = 6) {
@@ -117,4 +118,23 @@ test('removeMachine returns a held part to its input buffer', () => {
   engine.removeMachine({ machineId: 'Bb' });
   assert.equal(buf1.parts.length, 1);
   assert.equal(buf1.parts[0].id, 999);
+});
+
+test('regression: a resolved constraint clears from the bottleneck verdict within the utilization window', () => {
+  // A=S1 (cycle 4) feeds B=S2 (cycle 8); B is the slow station → the constraint.
+  const engine = new SimulationEngine(twoStationConfig(4, 8));
+  runTicks(engine, 2000);
+  let metrics = calculateMetrics(engine.getState());
+  assert.equal(metrics.machines.find(m => m.id === 'B').bottleneck, true,
+    'B should start out flagged as the constraint');
+
+  // Speed B up so it is no longer busy (now much faster than upstream A).
+  engine.updateConfig({ machineId: 'B', cycleTime: 1 });
+  // Run well past the utilization window so the verdict reflects only the
+  // post-change behaviour, not the long stretch when B *was* the constraint.
+  runTicks(engine, 600);
+
+  metrics = calculateMetrics(engine.getState());
+  assert.equal(metrics.machines.find(m => m.id === 'B').bottleneck, false,
+    'B should clear once its recent utilization drops below the threshold');
 });

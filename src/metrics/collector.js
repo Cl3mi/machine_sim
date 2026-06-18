@@ -73,11 +73,22 @@ export function calculateMetrics(state) {
   const bufferById = {};
   for (const b of buffers) bufferById[b.id] = b;
 
+  // Utilization and bottleneck detection use recent-window tick counts (winX)
+  // so the verdict reflects current flow; we fall back to lifetime counters for
+  // snapshots that predate windowing (e.g. unit-test fixtures).
+  const winTicks = (m) => ({
+    proc:    m.winProcessing ?? m.ticksProcessing,
+    blocked: m.winBlocked    ?? m.ticksBlocked,
+    starved: m.winStarved    ?? m.ticksStarved,
+    idle:    m.winIdle       ?? m.ticksIdle,
+  });
+
   const machineMetrics = machines.map(m => {
-    const totalTicks = m.ticksProcessing + m.ticksBlocked + m.ticksStarved + m.ticksIdle;
-    const utilization  = totalTicks > 0 ? m.ticksProcessing / totalTicks : 0;
-    const blockedRatio = totalTicks > 0 ? m.ticksBlocked    / totalTicks : 0;
-    const starvedRatio = totalTicks > 0 ? m.ticksStarved    / totalTicks : 0;
+    const w = winTicks(m);
+    const totalTicks = w.proc + w.blocked + w.starved + w.idle;
+    const utilization  = totalTicks > 0 ? w.proc    / totalTicks : 0;
+    const blockedRatio = totalTicks > 0 ? w.blocked / totalTicks : 0;
+    const starvedRatio = totalTicks > 0 ? w.starved / totalTicks : 0;
 
     const upstreamBuffer = bufferById[m.inputBufferId] ?? null;
     const avgQueueWait   = upstreamBuffer && upstreamBuffer.totalPartsOut > 0
@@ -112,16 +123,17 @@ export function calculateMetrics(state) {
   // Aggregate per station (ratios of summed ticks across parallel machines).
   const stationAgg = new Map(); // stationId -> aggregate
   for (const mc of machines) {
-    const totalTicks = mc.ticksProcessing + mc.ticksBlocked + mc.ticksStarved + mc.ticksIdle;
+    const w = winTicks(mc);
+    const totalTicks = w.proc + w.blocked + w.starved + w.idle;
     const a = stationAgg.get(mc.stationId) ?? {
       stationId: mc.stationId, proc: 0, blocked: 0, starved: 0, total: 0,
       // Parallel machines in a station share one input and one output buffer,
       // so the first machine's buffer ids represent the whole station.
       inputBufferId: mc.inputBufferId, outputBufferId: mc.outputBufferId,
     };
-    a.proc    += mc.ticksProcessing;
-    a.blocked += mc.ticksBlocked;
-    a.starved += mc.ticksStarved;
+    a.proc    += w.proc;
+    a.blocked += w.blocked;
+    a.starved += w.starved;
     a.total   += totalTicks;
     stationAgg.set(mc.stationId, a);
   }
