@@ -24,6 +24,7 @@ import { randomUUID } from 'crypto';
 
 import { SimulationEngine } from './simulation/engine.js';
 import { DEFAULT_CONFIG }   from './simulation/config.js';
+import { PRESETS, getPreset }   from './simulation/presets.js';
 import { calculateMetrics } from './metrics/collector.js';
 import { updateMetrics, register } from './metrics/prometheus.js';
 import { startOpcUaServer } from './opcua/server.js';
@@ -43,8 +44,10 @@ const sessions = new Map();
 function getSession(sid) {
   let s = sessions.get(sid);
   if (!s) {
+    // Start paused: the frontend shows a "Start simulation" prompt and the user
+    // kicks off the run with Play (or the start banner). Avoids the line racing
+    // ahead before the page has even rendered.
     const engine = new SimulationEngine(DEFAULT_CONFIG);
-    engine.play();
     s = { engine, sseClients: new Set(), cleanupTimer: null };
     sessions.set(sid, s);
   }
@@ -143,6 +146,11 @@ app.get('/api/state', async (req) => getSession(req.sid).engine.getState());
 // Computed metrics (JSON)
 app.get('/api/metrics', async (req) => calculateMetrics(getSession(req.sid).engine.getState()));
 
+// Curated scenario presets — metadata only (id/label/description), never the
+// full configs. The frontend renders one load button per entry.
+app.get('/api/presets', async () =>
+  PRESETS.map(({ id, label, description }) => ({ id, label, description })));
+
 // Control endpoint
 app.post('/api/control', async (req) => {
   const { engine } = getSession(req.sid);
@@ -155,6 +163,12 @@ app.post('/api/control', async (req) => {
     case 'resetToDefaults': engine.resetToDefaults(); break;
     case 'spawnMachine':    engine.spawnMachine(params);  break;
     case 'removeMachine':   engine.removeMachine(params); break;
+    case 'loadPreset': {
+      const cfg = getPreset(params.presetId);
+      if (!cfg) return { ok: false, reason: 'unknown preset' };
+      engine.loadConfig(cfg);
+      return { ok: true, tick: engine.tick };
+    }
     default:
       // No recognised action — may still have params to update
   }
