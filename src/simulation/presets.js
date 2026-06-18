@@ -14,7 +14,7 @@ export const PRESETS = [
     description: 'Eine langsame Station (M3 Montage) wird zum klaren Engpass: davor staut es sich, dahinter herrscht Leerlauf.',
     config: {
       ticksPerSecond: 10,
-      source: { interval: 2, materialStock: -1 },
+      source: { interval: 2, materialStock: 200 },
       machines: [
         { id: 'M1', stationId: 'S1', name: 'Rohbearbeitung',   cycleTime: 3,                   inputBufferId: 'BUF0', outputBufferId: 'BUF1' },
         { id: 'M2', stationId: 'S2', name: 'Qualitätsprüfung', cycleTime: 3, rejectRate: 0.05, inputBufferId: 'BUF1', outputBufferId: 'BUF2' },
@@ -30,17 +30,17 @@ export const PRESETS = [
     },
   },
   {
-    id: 'balanced',
-    label: 'Ausbalanciert',
-    description: 'Taktzeiten und Puffer sind aufeinander abgestimmt — gleichmäßig hohe Auslastung, kein einzelner Engpass.',
+    id: 'max-throughput',
+    label: 'Maximaler Durchsatz',
+    description: 'Alle Stationen teilen sich dieselbe kurze Taktzeit und werden passend versorgt — höchster nachhaltiger Durchsatz bei nahezu vollständiger Auslastung, ohne Engpass oder Leerlauf.',
     config: {
       ticksPerSecond: 10,
-      source: { interval: 4, materialStock: -1 },
+      source: { interval: 2, materialStock: 200 },
       machines: [
-        { id: 'M1', stationId: 'S1', name: 'Rohbearbeitung',   cycleTime: 4,                   inputBufferId: 'BUF0', outputBufferId: 'BUF1' },
-        { id: 'M2', stationId: 'S2', name: 'Qualitätsprüfung', cycleTime: 4, rejectRate: 0.05, inputBufferId: 'BUF1', outputBufferId: 'BUF2' },
-        { id: 'M3', stationId: 'S3', name: 'Montage',          cycleTime: 4,                   inputBufferId: 'BUF2', outputBufferId: 'BUF3' },
-        { id: 'M4', stationId: 'S4', name: 'Verpackung',       cycleTime: 4,                   inputBufferId: 'BUF3', outputBufferId: null   },
+        { id: 'M1', stationId: 'S1', name: 'Rohbearbeitung',   cycleTime: 2,                   inputBufferId: 'BUF0', outputBufferId: 'BUF1' },
+        { id: 'M2', stationId: 'S2', name: 'Qualitätsprüfung', cycleTime: 2, rejectRate: 0.05, inputBufferId: 'BUF1', outputBufferId: 'BUF2' },
+        { id: 'M3', stationId: 'S3', name: 'Montage',          cycleTime: 2,                   inputBufferId: 'BUF2', outputBufferId: 'BUF3' },
+        { id: 'M4', stationId: 'S4', name: 'Verpackung',       cycleTime: 2,                   inputBufferId: 'BUF3', outputBufferId: null   },
       ],
       buffers: [
         { id: 'BUF0', capacity: 4 },
@@ -56,7 +56,7 @@ export const PRESETS = [
     description: 'Die Quelle liefert zu langsam — die Maschinen stehen die meiste Zeit ausgehungert (STARVED) still.',
     config: {
       ticksPerSecond: 10,
-      source: { interval: 12, materialStock: -1 },
+      source: { interval: 12, materialStock: 200 },
       machines: [
         { id: 'M1', stationId: 'S1', name: 'Rohbearbeitung',   cycleTime: 4,                   inputBufferId: 'BUF0', outputBufferId: 'BUF1' },
         { id: 'M2', stationId: 'S2', name: 'Qualitätsprüfung', cycleTime: 3, rejectRate: 0.05, inputBufferId: 'BUF1', outputBufferId: 'BUF2' },
