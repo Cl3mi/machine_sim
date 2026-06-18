@@ -650,6 +650,15 @@ g[id^="elem-M"]:hover .machine-rect:not(.selected):not(.bottleneck) {
   font-weight: 600;
 }
 #suggestion-banner[hidden] { display: none; }
+/* The "no internal bottleneck" note is informational, not a warning — recolor
+   the whole banner green when it is the only thing shown (the note is emitted
+   only when no constraint was found, so it never shares the banner with a warning). */
+#suggestion-banner:has(.sg-note) {
+  background: #064e3b;
+  border-bottom-color: #22c55e;
+  color: #bbf7d0;
+}
+#suggestion-banner .sg-note { color: #bbf7d0; }
 #suggestion-banner .sg-row {
   display: flex;
   align-items: center;

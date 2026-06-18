@@ -92,6 +92,11 @@ export class SimulationEngine extends EventEmitter {
   // Live config update — students can change parameters while the sim runs.
   // Also mirrors changes into _config so that reset() preserves them.
   updateConfig(params) {
+    // Changes that can shift which station is the constraint reset the
+    // utilization window (see _lastFlowChangeTick); plain speed changes do not.
+    const flowChange = ['sourceInterval', 'cycleTime', 'rejectRate', 'bufferCapacity']
+      .some(k => params[k] !== undefined);
+
     if (params.speed !== undefined) this.setSpeed(params.speed);
 
     if (params.sourceInterval !== undefined) {
@@ -128,6 +133,8 @@ export class SimulationEngine extends EventEmitter {
         // If parts now exceed new capacity, leave them in (don't eject — too disruptive)
       }
     }
+
+    if (flowChange) this._lastFlowChangeTick = this.tick;
   }
 
   // Add a parallel machine to a station. The new machine shares the station's
@@ -164,6 +171,7 @@ export class SimulationEngine extends EventEmitter {
     this._config.machines.push(cfgEntry);
     this.machines.push(new Machine(cfgEntry));
     this._reindex();
+    this._lastFlowChangeTick = this.tick;
 
     return { ok: true, id: newId };
   }
@@ -193,6 +201,7 @@ export class SimulationEngine extends EventEmitter {
     this.machines = this.machines.filter(m => m.id !== machineId);
     this._config.machines = this._config.machines.filter(m => m.id !== machineId);
     this._reindex();
+    this._lastFlowChangeTick = this.tick;
 
     return { ok: true };
   }
@@ -206,13 +215,16 @@ export class SimulationEngine extends EventEmitter {
 
   // Returns a plain JSON-serialisable snapshot of the current state
   getState() {
-    // Cumulative counters from UTIL_WINDOW_TICKS ticks ago, used to derive the
-    // recent-window tick counts below by subtraction. _history records one row of
-    // cumulative counters per tick (newest last), so the row UTIL_WINDOW_TICKS
-    // back is the window's baseline. When the run is younger than the window (or
-    // a machine was spawned more recently) the baseline is absent → treated as 0,
-    // so the window covers the machine's whole life so far.
-    const windowBase = this._history[this._history.length - 1 - UTIL_WINDOW_TICKS];
+    // Cumulative counters from the start of the utilization window, used to derive
+    // the recent-window tick counts below by subtraction. _history records one row
+    // of cumulative counters per tick (newest last), so the row `ticksBack` back is
+    // the window's baseline. The window spans UTIL_WINDOW_TICKS ticks but never
+    // reaches back past the last flow-affecting change, so a config edit makes the
+    // verdict reflect post-change behaviour almost immediately. When the baseline
+    // row is absent (young run, or a machine spawned more recently) it is treated
+    // as 0, so the window covers the machine's whole life so far.
+    const ticksBack  = Math.min(UTIL_WINDOW_TICKS, this.tick - this._lastFlowChangeTick);
+    const windowBase = this._history[this._history.length - 1 - ticksBack];
     return {
       tick:     this.tick,
       running:  this._running,
@@ -275,6 +287,12 @@ export class SimulationEngine extends EventEmitter {
   _reset() {
     this.tick = 0;
     this._history = [];
+    // Tick of the most recent flow-affecting change (cycle time, machine
+    // spawn/remove, source/buffer edit). The utilization window never looks back
+    // past this point, so after the user changes something the bottleneck verdict
+    // reflects only post-change behaviour and a resolved constraint clears within
+    // a few ticks instead of waiting out the full UTIL_WINDOW_TICKS history.
+    this._lastFlowChangeTick = 0;
 
     const cfg = this._config;
 

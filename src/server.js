@@ -11,7 +11,7 @@
  *   GET  /              → serves index.html (the visual frontend)
  *   GET  /api/state     → current simulation state (JSON)
  *   GET  /api/metrics   → calculateMetrics() output (JSON, for frontend polling)
- *   GET  /api/events    → SSE stream, pushes state+metrics every 500 ms
+ *   GET  /api/events    → SSE stream, pushes state+metrics every 250 ms
  *   POST /api/control   → play/pause/reset/param updates
  *   GET  /metrics       → Prometheus scrape endpoint (text/plain)
  */
@@ -108,7 +108,7 @@ setInterval(() => {
       try { res.raw.write(line); } catch (_) { s.sseClients.delete(res); }
     }
   }
-}, 500);
+}, 250);
 
 // ── Routes ─────────────────────────────────────────────────────────────────
 

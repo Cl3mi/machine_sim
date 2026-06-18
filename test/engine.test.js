@@ -138,3 +138,20 @@ test('regression: a resolved constraint clears from the bottleneck verdict withi
   assert.equal(metrics.machines.find(m => m.id === 'B').bottleneck, false,
     'B should clear once its recent utilization drops below the threshold');
 });
+
+test('regression: resolving a constraint clears it within a few ticks, not a full window', () => {
+  // B (cycle 8) is the constraint after a long saturated run.
+  const engine = new SimulationEngine(twoStationConfig(4, 8));
+  runTicks(engine, 2000);
+  assert.equal(calculateMetrics(engine.getState()).machines.find(m => m.id === 'B').bottleneck,
+    true, 'B should start out flagged as the constraint');
+
+  // Speed B up, then run only a fraction of UTIL_WINDOW_TICKS. Because the window
+  // never reaches back past a flow-affecting change, the verdict should already
+  // reflect the post-change behaviour and clear B — the banner disappears fast.
+  engine.updateConfig({ machineId: 'B', cycleTime: 1 });
+  runTicks(engine, 50);
+
+  assert.equal(calculateMetrics(engine.getState()).machines.find(m => m.id === 'B').bottleneck,
+    false, 'B should clear within a few ticks of the change, not wait out the full window');
+});

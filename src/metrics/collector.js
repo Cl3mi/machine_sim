@@ -231,9 +231,11 @@ export function calculateMetrics(state) {
   if (constraints.length === 0 && (sourceStarved || anyBusy)) {
     suggestions.push({
       type: 'no-internal-constraint',
-      reason: 'Kein interner Engpass — die Linie wird von der Quelle / der '
-            + 'Ankunftsrate begrenzt (oder staut sich an einem nachgelagerten '
-            + 'Engpass zurück).',
+      reason: 'Kein Engpass an den Maschinen — die Linie läuft im Gleichgewicht. '
+            + 'Der Durchsatz wird vom Materialnachschub begrenzt (die Quelle liefert '
+            + 'die Teile langsamer, als die Maschinen sie verarbeiten könnten). '
+            + 'Zusätzliche Maschinen oder kürzere Taktzeiten bringen hier nichts; '
+            + 'erhöhe stattdessen die Materialzufuhr, um mehr Durchsatz zu erreichen.',
     });
   }
 
