@@ -168,9 +168,15 @@
         <div class="unit">parts / 100 ticks</div>
       </div>
       <div class="metric-card">
-        <div class="label">Avg Lead Time <span class="info-icon" data-tip="Durchschnittliche Durchlaufzeit eines Teils von der Quelle bis zur Senke in Takten.">i</span></div>
+        <div class="label">Avg Lead Time <span class="info-icon" data-tip="Durchschnittliche Durchlaufzeit eines Teils von der Quelle bis zur Senke in Takten. Median (p50) und p95 zeigen die Streuung — ein hoher p95 bedeutet, dass einzelne Teile deutlich länger brauchen als der Durchschnitt.">i</span></div>
         <div class="value" id="m-leadtime">0</div>
         <div class="unit">ticks (source → sink)</div>
+        <div class="unit" id="m-leadtime-spread">p50 0 · p95 0 · σ 0</div>
+      </div>
+      <div class="metric-card">
+        <div class="label">Flow Efficiency <span class="info-icon" data-tip="Wertschöpfungsanteil: theoretische Bearbeitungszeit (Summe der Taktzeiten) geteilt durch die durchschnittliche Durchlaufzeit. Niedrige Werte bedeuten, dass Teile den Großteil ihrer Zeit in Puffern warten statt bearbeitet zu werden.">i</span></div>
+        <div class="value" id="m-flow-efficiency">0</div>
+        <div class="unit">value-added ratio</div>
       </div>
       <div class="metric-card">
         <div class="label">Parts in System <span class="info-icon" data-tip="Gesamtanzahl der Teile, die sich aktuell in Puffern oder Maschinen befinden.">i</span></div>
@@ -198,6 +204,7 @@
             <th>Machine</th>
             <th>State <span class="info-icon" data-tip="Aktueller Betriebszustand der Maschine (z. B. Bearbeitung, Blockiert, Ausgehungert).">i</span></th>
             <th>Utilization <span class="info-icon" data-tip="Prozentualer Anteil der Zeit, in der die Maschine aktiv ein Teil bearbeitet hat.">i</span></th>
+            <th>Throughput <span class="info-icon" data-tip="Von dieser Maschine bearbeitete Teile pro 100 Simulationstakte.">i</span></th>
             <th>Avg Queue Wait <span class="info-icon" data-tip="Durchschnittliche Wartezeit eines Teils im Puffer vor dieser Maschine in Takten.">i</span></th>
             <th>Blocked Time <span class="info-icon" data-tip="Gesamtanzahl der Takte, in denen die Maschine blockiert war (Ausgangspuffer voll).">i</span></th>
             <th>Starved Time <span class="info-icon" data-tip="Gesamtanzahl der Takte, in denen die Maschine auf Nachschub gewartet hat.">i</span></th>

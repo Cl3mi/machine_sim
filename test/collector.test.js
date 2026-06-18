@@ -4,11 +4,12 @@ import { calculateMetrics } from '../src/metrics/collector.js';
 
 // Build a minimal state snapshot from machine specs.
 // Spec fields: { id, stationId, inputBufferId, outputBufferId?, proc,
-//                blocked?, starved?, name? }. Total ticks fixed at 100;
-//   starved defaults to (100 - proc - blocked).
+//                blocked?, starved?, name?, cycleTime?, partsProcessed? }.
+//   Total ticks fixed at 100; starved defaults to (100 - proc - blocked).
 // Buffers are derived from the ids the machines reference. Override a buffer's
 // capacity/load/wait via `bufferOverrides`, e.g. { BUF1: { load: 3, capacity: 3 } }.
-function makeState(machineSpecs, bufferOverrides = {}) {
+// `sink` overrides the sink snapshot, e.g. { recentParts: [...] }.
+function makeState(machineSpecs, bufferOverrides = {}, sink = undefined) {
   const bufferIds = new Set();
   for (const s of machineSpecs) {
     if (s.inputBufferId)  bufferIds.add(s.inputBufferId);
@@ -30,15 +31,23 @@ function makeState(machineSpecs, bufferOverrides = {}) {
       return {
         id: s.id, stationId: s.stationId, name: s.name ?? s.id,
         inputBufferId: s.inputBufferId, outputBufferId: s.outputBufferId ?? null,
-        state: 'PROCESSING', currentPartId: 1, cycleTime: 5, rejectRate: 0,
+        state: 'PROCESSING', currentPartId: 1, cycleTime: s.cycleTime ?? 5, rejectRate: 0,
         ticksProcessing: proc, ticksBlocked: blocked,
         ticksStarved: starved, ticksIdle: 0,
-        partsProcessed: proc,
+        partsProcessed: s.partsProcessed ?? proc,
       };
     }),
     buffers,
-    sink: { partsReceived: 10, recentParts: [] },
+    sink: sink ?? { partsReceived: 10, recentParts: [] },
     scrap: { partsReceived: 0 },
+  };
+}
+
+// Sink snapshot with the given lead times (completedAt - createdAt per part).
+function makeSink(leadTimes) {
+  return {
+    partsReceived: leadTimes.length,
+    recentParts: leadTimes.map((lt, i) => ({ id: i + 1, createdAt: 0, completedAt: lt })),
   };
 }
 
@@ -204,4 +213,80 @@ test('two un-blocked busy stations are ranked by confidence, primary = highest',
   const m = calculateMetrics(state);
   assert.equal(m.machines.find(x => x.id === 'B').isPrimaryConstraint, true);
   assert.equal(m.machines.find(x => x.id === 'A').isPrimaryConstraint, false);
+});
+
+// ── Flow efficiency (value-added ratio) ──────────────────────────────────────
+
+test('flowEfficiency is theoretical processing time over average lead time', () => {
+  const state = makeState([
+    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 30, cycleTime: 5 },
+    { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 30, cycleTime: 10 },
+  ], {}, makeSink([10, 20, 30, 40, 50]));   // avg lead time = 30
+  const m = calculateMetrics(state);
+  // theoretical = 5 + 10 = 15 ; 15 / 30 = 0.5
+  assert.equal(m.flowEfficiency, 0.5);
+});
+
+test('flowEfficiency counts each station once even with parallel machines', () => {
+  const state = makeState([
+    { id: 'A',  stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 30, cycleTime: 5 },
+    { id: 'Ab', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 30, cycleTime: 5 },
+    { id: 'B',  stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 30, cycleTime: 10 },
+  ], {}, makeSink([30]));   // avg lead time = 30
+  const m = calculateMetrics(state);
+  // theoretical = 5 (S1, counted once) + 10 (S2) = 15 ; 15 / 30 = 0.5
+  assert.equal(m.flowEfficiency, 0.5);
+});
+
+test('flowEfficiency is 0 when no parts have completed', () => {
+  const state = makeState([
+    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: null, proc: 30, cycleTime: 5 },
+  ], {}, makeSink([]));
+  const m = calculateMetrics(state);
+  assert.equal(m.flowEfficiency, 0);
+});
+
+// ── Lead-time distribution ────────────────────────────────────────────────────
+
+test('leadTimeStats reports count, min, max, avg, median, p95 and stdDev', () => {
+  const state = makeState([
+    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: null, proc: 30 },
+  ], {}, makeSink([10, 20, 30, 40, 50]));
+  const s = calculateMetrics(state).leadTimeStats;
+  assert.equal(s.count, 5);
+  assert.equal(s.min, 10);
+  assert.equal(s.max, 50);
+  assert.equal(s.avg, 30);
+  assert.equal(s.p50, 30);          // nearest-rank median
+  assert.equal(s.p95, 50);
+  assert.equal(s.stdDev, 14.1);     // sqrt(200) ≈ 14.14, rounded to 1 dp
+});
+
+test('leadTimeStats is all zeros with no completed parts', () => {
+  const state = makeState([
+    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: null, proc: 30 },
+  ], {}, makeSink([]));
+  const s = calculateMetrics(state).leadTimeStats;
+  assert.deepEqual(s, { count: 0, min: 0, max: 0, avg: 0, p50: 0, p95: 0, stdDev: 0 });
+});
+
+test('avgLeadTime still equals leadTimeStats.avg (backward compatible)', () => {
+  const state = makeState([
+    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: null, proc: 30 },
+  ], {}, makeSink([10, 20, 30, 40, 50]));
+  const m = calculateMetrics(state);
+  assert.equal(m.avgLeadTime, m.leadTimeStats.avg);
+});
+
+// ── Per-machine throughput rate ───────────────────────────────────────────────
+
+test('each machine reports throughput as parts processed per 100 ticks', () => {
+  const state = makeState([
+    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 30, partsProcessed: 25 },
+    { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95, partsProcessed: 80 },
+  ]);   // tick = 100
+  const m = calculateMetrics(state);
+  // (partsProcessed / tick) * 100, with tick = 100 → equals partsProcessed
+  assert.equal(m.machines.find(x => x.id === 'A').throughput, 25);
+  assert.equal(m.machines.find(x => x.id === 'B').throughput, 80);
 });

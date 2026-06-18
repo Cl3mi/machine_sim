@@ -739,6 +739,13 @@ function updateMetricsDashboard(metrics, state) {
   setTextContent('m-in-system',   metrics.partsInSystem);
   setTextContent('m-scrapped',    metrics.scrappedParts);
 
+  const lt = metrics.leadTimeStats;
+  if (lt) {
+    setTextContent('m-leadtime-spread', `p50 ${lt.p50} · p95 ${lt.p95} · σ ${lt.stdDev}`);
+  }
+  // Flow efficiency as a percentage (value-added ratio).
+  setTextContent('m-flow-efficiency', `${(metrics.flowEfficiency * 100).toFixed(0)}%`);
+
   // Sparkline data — only advance while running so the chart freezes on pause
   if (state && state.running) {
     sparklineData.push(metrics.throughput);
@@ -757,6 +764,7 @@ function updateMetricsDashboard(metrics, state) {
       <td><strong>${m.id}</strong> — ${m.name}${m.bottleneck ? '<span class="bottleneck-badge">Engpass</span>' : ''}</td>
       <td><span class="state-badge state-${m.currentState}">${m.currentState}</span> <span class="state-desc">${STATE_DESCRIPTION[m.currentState] ?? ''}</span></td>
       <td>${(m.utilization * 100).toFixed(1)}%</td>
+      <td>${m.throughput.toFixed(1)}</td>
       <td>${m.avgQueueWait.toFixed(1)} ticks</td>
       <td>${m.blockedTime} ticks</td>
       <td>${m.starvedTime} ticks</td>

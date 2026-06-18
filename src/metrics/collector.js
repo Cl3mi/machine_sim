@@ -57,15 +57,28 @@ export function calculateMetrics(state) {
     ? (sink.partsReceived / tick) * 100
     : 0;
 
-  // ── Average lead time ──────────────────────────────────────────────────────
-  // Avg ticks from Source emission to Sink arrival, over recent completed parts.
-  let avgLeadTime = 0;
-  if (sink.recentParts && sink.recentParts.length > 0) {
-    const totalLead = sink.recentParts.reduce(
-      (sum, p) => sum + (p.completedAt - p.createdAt), 0
-    );
-    avgLeadTime = totalLead / sink.recentParts.length;
+  // ── Lead-time distribution ──────────────────────────────────────────────────
+  // Ticks from Source emission to Sink arrival, over recent completed parts.
+  // The mean alone hides spread; two lines with equal averages but different
+  // variance behave very differently, so we also report min/max/median/p95/stdDev.
+  const leadTimes = (sink.recentParts ?? []).map(p => p.completedAt - p.createdAt);
+  const leadTimeStats = summariseLeadTimes(leadTimes);
+  const avgLeadTime = leadTimeStats.avg;
+
+  // ── Flow efficiency (value-added ratio) ─────────────────────────────────────
+  // Fraction of a part's lead time actually spent being processed, vs waiting in
+  // buffers. theoretical = sum of one machine's cycle time per station (parallel
+  // machines add capacity, not extra processing steps, so each station counts
+  // once). Usually low — the headline lean insight that most of a part's life is
+  // spent queueing. 0 until parts complete (avgLeadTime still 0).
+  const cycleByStation = new Map();
+  for (const m of machines) {
+    if (!cycleByStation.has(m.stationId)) cycleByStation.set(m.stationId, m.cycleTime ?? 0);
   }
+  const theoreticalProcessing = [...cycleByStation.values()].reduce((s, c) => s + c, 0);
+  const flowEfficiency = avgLeadTime > 0
+    ? Math.round((theoreticalProcessing / avgLeadTime) * 100) / 100
+    : 0;
 
   // ── Parts currently in the system ─────────────────────────────────────────
   // Sum of parts in all buffers + parts inside machines
@@ -99,11 +112,17 @@ export function calculateMetrics(state) {
       ? upstreamBuffer.totalWaitTicks / upstreamBuffer.totalPartsOut
       : 0;
 
+    // Per-machine throughput: parts this machine processed per 100 ticks,
+    // normalised the same way as the line-level throughput above so students can
+    // compare a station's actual output against the line and against capacity.
+    const machineThroughput = tick > 0 ? (m.partsProcessed / tick) * 100 : 0;
+
     return {
       id:           m.id,
       stationId:    m.stationId,
       name:         m.name,
       utilization,
+      throughput:   Math.round(machineThroughput * 100) / 100,
       avgQueueWait,
       blockedTime:  m.ticksBlocked,
       starvedTime:  m.ticksStarved,
@@ -256,11 +275,38 @@ export function calculateMetrics(state) {
   return {
     throughput:    Math.round(throughput * 100) / 100,
     avgLeadTime:   Math.round(avgLeadTime * 10) / 10,
+    leadTimeStats,
+    flowEfficiency,
     scrappedParts: scrap.partsReceived,
     machines:      machineMetrics,
     buffers:       bufferMetrics,
     simTime:       tick,
     partsInSystem,
     suggestions,
+  };
+}
+
+// Summarise a list of lead times into count/min/max/avg/p50/p95/stdDev.
+// Percentiles use the nearest-rank method (index = ceil(p/100 · n) − 1). Returns
+// all-zero stats for an empty list. Values rounded to 1 decimal place.
+function summariseLeadTimes(values) {
+  if (values.length === 0) {
+    return { count: 0, min: 0, max: 0, avg: 0, p50: 0, p95: 0, stdDev: 0 };
+  }
+  const sorted = [...values].sort((a, b) => a - b);
+  const n = sorted.length;
+  const sum = sorted.reduce((s, v) => s + v, 0);
+  const avg = sum / n;
+  const variance = sorted.reduce((s, v) => s + (v - avg) ** 2, 0) / n;
+  const percentile = (p) => sorted[Math.min(n - 1, Math.max(0, Math.ceil((p / 100) * n) - 1))];
+  const round1 = (x) => Math.round(x * 10) / 10;
+  return {
+    count:  n,
+    min:    round1(sorted[0]),
+    max:    round1(sorted[n - 1]),
+    avg:    round1(avg),
+    p50:    round1(percentile(50)),
+    p95:    round1(percentile(95)),
+    stdDev: round1(Math.sqrt(variance)),
   };
 }
