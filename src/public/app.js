@@ -1143,7 +1143,8 @@ async function loadPreset(presetId, label) {
 
   if (!res.ok) { showToast('⚠ Preset konnte nicht geladen werden'); return; }
 
-  const newState = await fetch('/api/state').then(r => r.json());
+  const newState = await fetch('/api/state').then(r => r.json()).catch(() => null);
+  if (!newState) { showToast('⚠ Preset geladen, aber Ansicht konnte nicht aktualisiert werden'); return; }
   lastState = newState;
   buildPipeline(newState);
   builtMachineKey = newState.machines.map(m => m.id).join(',');
