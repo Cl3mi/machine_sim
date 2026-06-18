@@ -32,6 +32,10 @@ const W_FILL   = 0.2;
 // Keep in sync with engine MAX_MACHINES_PER_STATION — no point suggesting a
 // spawn for a station that is already full.
 const MAX_MACHINES_PER_STATION = 4;
+// Bottleneck detection is suppressed for the first WARMUP_TICKS of a run. The
+// utilization window holds too little data early on, so ratios swing wildly and
+// the verdict (marker, banner) would flicker. ~3s at the default 10 ticks/s.
+const WARMUP_TICKS = 30;
 
 /**
  * calculateMetrics(state) → metrics object
@@ -154,9 +158,11 @@ export function calculateMetrics(state) {
     a.downstream = downId != null ? stationAgg.get(downId) : null;
   }
 
-  // Gate + confidence score.
+  // Gate + confidence score. Suppressed during warm-up (see WARMUP_TICKS): the
+  // recent-window ratios are too noisy in the first few seconds to trust.
+  const warmedUp = (state.tick ?? 0) >= WARMUP_TICKS;
   const constraints = [];
-  for (const a of stationAgg.values()) {
+  for (const a of (warmedUp ? stationAgg.values() : [])) {
     const busy       = a.avgUtil > BOTTLENECK_UTIL_THRESHOLD;
     const notBlocked = a.blockedRatio < BLOCKED_MAX;
     if (!(busy && notBlocked)) continue;
@@ -228,7 +234,7 @@ export function calculateMetrics(state) {
 
   // Diagnostic note: no internal constraint, but the line is supply-limited or
   // everything is blocked. Emitted only when no station passed the gates.
-  if (constraints.length === 0 && (sourceStarved || anyBusy)) {
+  if (warmedUp && constraints.length === 0 && (sourceStarved || anyBusy)) {
     suggestions.push({
       type: 'no-internal-constraint',
       reason: 'Kein Engpass an den Maschinen — die Linie läuft im Gleichgewicht. '

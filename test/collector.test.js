@@ -57,6 +57,23 @@ test('a single saturated station is flagged and gets one suggestion', () => {
   assert.match(m.suggestions[0].label, /B/);
 });
 
+test('no bottleneck or suggestions during the warm-up window (early ticks fluctuate)', () => {
+  const base = makeState([
+    { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 30 },
+    { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95 },
+  ]);
+
+  // Early in the run the utilization window holds too little data to trust.
+  const early = calculateMetrics({ ...base, tick: 10 });
+  assert.equal(early.machines.find(x => x.id === 'B').bottleneck, false);
+  assert.equal(early.suggestions.length, 0);
+
+  // Once past the warm-up window the same saturation is flagged as before.
+  const later = calculateMetrics({ ...base, tick: 100 });
+  assert.equal(later.machines.find(x => x.id === 'B').bottleneck, true);
+  assert.ok(later.suggestions.length >= 1);
+});
+
 test('multiple un-blocked constraints are suggested highest-confidence first', () => {
   const state = makeState([
     { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 70, blocked: 0 },
