@@ -1118,6 +1118,66 @@ async function applyReset(action) {
 document.getElementById('btn-reset').addEventListener('click', () => applyReset('reset'));
 document.getElementById('btn-reset-defaults').addEventListener('click', () => applyReset('resetToDefaults'));
 
+// ── Scenario presets ────────────────────────────────────────────────────────
+
+// Transient confirmation message. Re-arming clearTimeout avoids a stale earlier
+// toast hiding a newer one.
+let toastTimer = null;
+function showToast(message) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = message;
+  el.hidden = false;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, 3000);
+}
+
+// Loading a preset swaps the whole machine/buffer set, so we reuse the reset
+// flow (rebuild pipeline + sliders from the fresh state) rather than just diffing.
+async function loadPreset(presetId, label) {
+  const res = await fetch('/api/control', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'loadPreset', params: { presetId } }),
+  }).then(r => r.json()).catch(() => ({ ok: false }));
+
+  if (!res.ok) { showToast('⚠ Preset konnte nicht geladen werden'); return; }
+
+  const newState = await fetch('/api/state').then(r => r.json());
+  lastState = newState;
+  buildPipeline(newState);
+  builtMachineKey = newState.machines.map(m => m.id).join(',');
+  prevStateForDiff = newState;
+  resetParticles();
+  buildControlSliders(newState);
+  document.getElementById('src-interval').value = newState.source.interval;
+  document.getElementById('val-src-interval').textContent = newState.source.interval;
+  document.getElementById('material-stock').value = newState.source.materialStock;
+  document.getElementById('val-material-stock').textContent = newState.source.materialStock;
+
+  showToast(`✓ Preset „${label}" geladen – jetzt starten`);
+}
+
+// Fetch preset metadata once and render a button per scenario.
+async function initPresetButtons() {
+  const row = document.getElementById('preset-row');
+  if (!row) return;
+  let presets = [];
+  try {
+    presets = await fetch('/api/presets').then(r => r.json());
+  } catch (_) { return; }
+  for (const p of presets) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = p.label;
+    btn.title = p.description;
+    btn.dataset.presetId = p.id;
+    btn.addEventListener('click', () => loadPreset(p.id, p.label));
+    row.appendChild(btn);
+  }
+}
+initPresetButtons();
+
 // Export per-tick history. The browser keeps our session cookie on the
 // navigation, so the server returns this session's recorded history.
 function downloadExport(format) {
