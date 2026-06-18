@@ -53,7 +53,7 @@ const gSimTime = new Gauge({
 
 const gMachineUtilization = new Gauge({
   name: 'plantsim_machine_utilization_ratio',
-  help: 'Machine utilization 0–1 (time PROCESSING / total ticks)',
+  help: 'Machine utilization 0–1 (fraction of recent-window ticks spent PROCESSING)',
   labelNames: ['machine_id', 'machine_name'],
   registers: [register],
 });

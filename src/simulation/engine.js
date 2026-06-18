@@ -26,6 +26,14 @@ import { DEFAULT_CONFIG } from './config.js';
 const MAX_MACHINES_PER_STATION = 4;
 const SPAWN_SUFFIXES = ['b', 'c', 'd'];   // M3 → M3b → M3c → M3d
 
+// Utilization (and therefore the bottleneck verdict) is measured over the most
+// recent UTIL_WINDOW_TICKS ticks, not the whole run. This lets the verdict track
+// *current* conditions: after a cycle-time change or a spawned machine resolves a
+// constraint, the old high-utilization history ages out within this many ticks
+// and the station stops being flagged — instead of a lifetime average dragging
+// the banner/marker on long after the constraint is gone.
+const UTIL_WINDOW_TICKS = 300;
+
 export class SimulationEngine extends EventEmitter {
   constructor(config = DEFAULT_CONFIG) {
     super();
@@ -198,6 +206,13 @@ export class SimulationEngine extends EventEmitter {
 
   // Returns a plain JSON-serialisable snapshot of the current state
   getState() {
+    // Cumulative counters from UTIL_WINDOW_TICKS ticks ago, used to derive the
+    // recent-window tick counts below by subtraction. _history records one row of
+    // cumulative counters per tick (newest last), so the row UTIL_WINDOW_TICKS
+    // back is the window's baseline. When the run is younger than the window (or
+    // a machine was spawned more recently) the baseline is absent → treated as 0,
+    // so the window covers the machine's whole life so far.
+    const windowBase = this._history[this._history.length - 1 - UTIL_WINDOW_TICKS];
     return {
       tick:     this.tick,
       running:  this._running,
@@ -224,6 +239,13 @@ export class SimulationEngine extends EventEmitter {
         ticksBlocked:    m.ticksBlocked,
         ticksStarved:    m.ticksStarved,
         ticksIdle:       m.ticksIdle,
+        // Recent-window counts (last UTIL_WINDOW_TICKS ticks) = current cumulative
+        // minus the cumulative at the window baseline. Used by the collector for
+        // utilization and bottleneck detection so the verdict tracks current flow.
+        winProcessing: m.ticksProcessing - (windowBase?.[`${m.id}_ticksProcessing`] ?? 0),
+        winBlocked:    m.ticksBlocked    - (windowBase?.[`${m.id}_ticksBlocked`]    ?? 0),
+        winStarved:    m.ticksStarved    - (windowBase?.[`${m.id}_ticksStarved`]    ?? 0),
+        winIdle:       m.ticksIdle       - (windowBase?.[`${m.id}_ticksIdle`]       ?? 0),
         partsProcessed:  m.partsProcessed,
         currentPartId:   m.currentPart?.id ?? null,
       })),
