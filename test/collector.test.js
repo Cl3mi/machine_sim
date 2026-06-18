@@ -122,12 +122,14 @@ test('each spawn suggestion carries confidence, threshold, and a flow-aware reas
 test('avgQueueWait uses the machine input buffer', () => {
   const state = makeState([
     { id: 'A', stationId: 'S1', inputBufferId: 'BUF0', outputBufferId: 'BUF1', proc: 30 },
-    { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95 },
-  ]);
+    { id: 'B', stationId: 'S2', inputBufferId: 'BUF1', outputBufferId: null,   proc: 95, blocked: 0 },
+  ], {
+    BUF0: { totalWaitTicks: 50,  totalPartsOut: 10 },
+    BUF1: { totalWaitTicks: 200, totalPartsOut: 10 },
+  });
   const m = calculateMetrics(state);
-  // BUF1: 200/10 = 20; BUF0: 50/10 = 5.
-  assert.equal(m.machines.find(x => x.id === 'B').avgQueueWait, 20);
-  assert.equal(m.machines.find(x => x.id === 'A').avgQueueWait, 5);
+  assert.equal(m.machines.find(x => x.id === 'B').avgQueueWait, 20); // 200/10
+  assert.equal(m.machines.find(x => x.id === 'A').avgQueueWait, 5);  // 50/10
 });
 
 test('a busy, un-blocked station is flagged as the constraint', () => {

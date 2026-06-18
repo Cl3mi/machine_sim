@@ -974,12 +974,17 @@ function updateSuggestionBanner(metrics) {
     return;
   }
   banner.hidden = false;
-  banner.innerHTML = suggestions.map((s, i) =>
-    `<div class="sg-row">` +
+  banner.innerHTML = suggestions.map((s, i) => {
+    if (s.type === 'no-internal-constraint') {
+      return `<div class="sg-row sg-note">` +
+        `<span class="sg-text">ℹ ${s.reason}</span>` +
+      `</div>`;
+    }
+    return `<div class="sg-row">` +
       `<span class="sg-text">⚠ ${s.label} <span class="info-icon" data-tip="${escapeAttr(s.reason)}">i</span></span>` +
       `<button class="sg-btn" data-station="${s.stationId}" data-idx="${i}" type="button">+ Parallele Maschine hinzufügen</button>` +
-    `</div>`
-  ).join('');
+    `</div>`;
+  }).join('');
   banner.querySelectorAll('.sg-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       postControl({ stationId: btn.dataset.station }, 'spawnMachine');
