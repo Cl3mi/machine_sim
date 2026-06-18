@@ -89,6 +89,17 @@ export class SimulationEngine extends EventEmitter {
     this._reset();
   }
 
+  // Loads an arbitrary full config (e.g. a curated preset) — same effect as
+  // resetToDefaults() but with a caller-supplied config instead of DEFAULT_CONFIG.
+  // Deep-clones so the caller's object can't mutate engine state. Stays paused
+  // at tick 0; call play() explicitly.
+  loadConfig(config) {
+    this.pause();
+    this._nextPartId = 1;
+    this._config = JSON.parse(JSON.stringify(config));
+    this._reset();
+  }
+
   // Live config update — students can change parameters while the sim runs.
   // Also mirrors changes into _config so that reset() preserves them.
   updateConfig(params) {
@@ -227,6 +238,7 @@ export class SimulationEngine extends EventEmitter {
     const windowBase = this._history[this._history.length - 1 - ticksBack];
     return {
       tick:     this.tick,
+      ticksPerSecond: this._config.ticksPerSecond,
       running:  this._running,
       speed:    this._speed,
       source: {

@@ -155,3 +155,30 @@ test('regression: resolving a constraint clears it within a few ticks, not a ful
   assert.equal(calculateMetrics(engine.getState()).machines.find(m => m.id === 'B').bottleneck,
     false, 'B should clear within a few ticks of the change, not wait out the full window');
 });
+
+test('loadConfig applies a new config, resets to tick 0, and stays paused', () => {
+  const engine = new SimulationEngine();   // DEFAULT_CONFIG
+  runTicks(engine, 50);
+  assert.ok(engine.tick > 0, 'precondition: ticks advanced');
+
+  engine.loadConfig(twoStationConfig(2, 6));
+
+  const state = engine.getState();
+  assert.equal(state.tick, 0, 'tick reset to 0');
+  assert.equal(state.running, false, 'engine paused after loadConfig');
+  assert.deepEqual(state.machines.map(m => m.id), ['A', 'B'], 'new machine set applied');
+  assert.equal(state.machines.find(m => m.id === 'B').cycleTime, 6, 'new cycle time applied');
+});
+
+test('loadConfig deep-clones so later mutation of the source object does not leak', () => {
+  const engine = new SimulationEngine();
+  const cfg = twoStationConfig(2, 6);
+  engine.loadConfig(cfg);
+  cfg.machines[0].cycleTime = 9999;
+  assert.notEqual(engine.getState().machines.find(m => m.id === 'A').cycleTime, 9999);
+});
+
+test('getState exposes ticksPerSecond from the active config', () => {
+  const engine = new SimulationEngine();   // DEFAULT_CONFIG has ticksPerSecond 10
+  assert.equal(engine.getState().ticksPerSecond, 10);
+});
