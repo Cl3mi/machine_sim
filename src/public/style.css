@@ -369,6 +369,14 @@ th .info-icon::after {
   top: calc(100% + 8px);
 }
 
+/* Suggestion-banner tooltips point downward too: the banner sits high on the
+   page and this tip is long (many lines), so an upward tooltip would clip at
+   the top of the viewport. */
+#suggestion-banner .info-icon::after {
+  bottom: auto;
+  top: calc(100% + 8px);
+}
+
 /* Prevent slider label's span rule from overriding info icon colour */
 .slider-group label .info-icon { color: var(--text-dim); font-weight: 700; }
 

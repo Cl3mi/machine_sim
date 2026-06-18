@@ -14,9 +14,21 @@
  *   - throughput       → "Produktionsrate"
  */
 
-// A station whose average machine utilization exceeds this is treated as the
-// line's constraint (bottleneck). Tunable.
+// A station whose average machine utilization exceeds this is "busy" — the
+// first gate for being the line's constraint. Tunable.
 const BOTTLENECK_UTIL_THRESHOLD = 0.6;
+// A station blocked more than this fraction of the time is a *victim* of a
+// downstream constraint, not the constraint itself — it fails the second gate.
+const BLOCKED_MAX = 0.05;
+// A station starved at least this fraction of the time is "starved"; also used
+// for the source-starved diagnostic and the STARVED_BY_UPSTREAM classification.
+const STARVED_MIN = 0.10;
+// Confidence-score weights (sum to 1): utilization, un-blockedness, downstream
+// starvation, upstream buffer fill.
+const W_UTIL   = 0.4;
+const W_BLOCK  = 0.2;
+const W_STARVE = 0.2;
+const W_FILL   = 0.2;
 // Keep in sync with engine MAX_MACHINES_PER_STATION — no point suggesting a
 // spawn for a station that is already full.
 const MAX_MACHINES_PER_STATION = 4;
@@ -63,7 +75,9 @@ export function calculateMetrics(state) {
 
   const machineMetrics = machines.map(m => {
     const totalTicks = m.ticksProcessing + m.ticksBlocked + m.ticksStarved + m.ticksIdle;
-    const utilization = totalTicks > 0 ? m.ticksProcessing / totalTicks : 0;
+    const utilization  = totalTicks > 0 ? m.ticksProcessing / totalTicks : 0;
+    const blockedRatio = totalTicks > 0 ? m.ticksBlocked    / totalTicks : 0;
+    const starvedRatio = totalTicks > 0 ? m.ticksStarved    / totalTicks : 0;
 
     const upstreamBuffer = bufferById[m.inputBufferId] ?? null;
     const avgQueueWait   = upstreamBuffer && upstreamBuffer.totalPartsOut > 0
@@ -78,46 +92,136 @@ export function calculateMetrics(state) {
       avgQueueWait,
       blockedTime:  m.ticksBlocked,
       starvedTime:  m.ticksStarved,
+      blockedRatio,                 // own ratio, 0–1
+      starvedRatio,                 // own ratio, 0–1
       currentState: m.state,
-      bottleneck:   false, // filled in below
+      bottleneck:          false,   // filled in by detection below
+      flowState:           'BALANCED',
+      isPrimaryConstraint: false,
     };
   });
 
-  // ── Bottleneck detection (station-level, utilization-based) ─────────────────
-  // Every station whose average machine utilization exceeds the threshold is a
-  // bottleneck — there can be several at once. (The previous heuristic flagged
-  // only the single busiest station.) Adding a parallel machine lowers a
-  // station's per-machine utilization, so a flagged bottleneck clears — the
-  // intended teaching feedback. Each flagged station that still has room yields
-  // one spawn suggestion; suggestions are ordered worst-utilization-first.
-  const stationStats = new Map();   // stationId -> { utilSum, count }
+  // ── Bottleneck detection (flow-based: utilization gate + starvation/blocking) ─
+  // A station is the *true constraint* when it is busy (high utilization) AND
+  // barely blocked — a blocked station is a victim of a downstream constraint.
+  // Two confirming flow signals (a starved downstream, a backed-up upstream
+  // buffer) raise a confidence score used to rank constraints and pick the
+  // primary one. See the design spec referenced in the file header.
+  const clamp = (x) => Math.max(0, Math.min(1, x));
+
+  // Aggregate per station (ratios of summed ticks across parallel machines).
+  const stationAgg = new Map(); // stationId -> aggregate
+  for (const mc of machines) {
+    const totalTicks = mc.ticksProcessing + mc.ticksBlocked + mc.ticksStarved + mc.ticksIdle;
+    const a = stationAgg.get(mc.stationId) ?? {
+      stationId: mc.stationId, proc: 0, blocked: 0, starved: 0, total: 0,
+      // Parallel machines in a station share one input and one output buffer,
+      // so the first machine's buffer ids represent the whole station.
+      inputBufferId: mc.inputBufferId, outputBufferId: mc.outputBufferId,
+    };
+    a.proc    += mc.ticksProcessing;
+    a.blocked += mc.ticksBlocked;
+    a.starved += mc.ticksStarved;
+    a.total   += totalTicks;
+    stationAgg.set(mc.stationId, a);
+  }
+  for (const a of stationAgg.values()) {
+    a.avgUtil      = a.total > 0 ? a.proc    / a.total : 0;
+    a.blockedRatio = a.total > 0 ? a.blocked / a.total : 0;
+    a.starvedRatio = a.total > 0 ? a.starved / a.total : 0;
+    const inBuf = bufferById[a.inputBufferId] ?? null;
+    a.inputFill  = inBuf && inBuf.capacity > 0 ? inBuf.load / inBuf.capacity : 0;
+  }
+
+  // Topology (linear chain): downstream station = the station whose input
+  // buffer is this station's output buffer.
+  const stationByInputBuffer = new Map();
+  for (const a of stationAgg.values()) stationByInputBuffer.set(a.inputBufferId, a.stationId);
+  for (const a of stationAgg.values()) {
+    const downId = a.outputBufferId != null ? stationByInputBuffer.get(a.outputBufferId) : undefined;
+    a.downstream = downId != null ? stationAgg.get(downId) : null;
+  }
+
+  // Gate + confidence score.
+  const constraints = [];
+  for (const a of stationAgg.values()) {
+    const busy       = a.avgUtil > BOTTLENECK_UTIL_THRESHOLD;
+    const notBlocked = a.blockedRatio < BLOCKED_MAX;
+    if (!(busy && notBlocked)) continue;
+    // A constraint paces everything after it, so a starved downstream is a
+    // positive signal. The last station has no downstream to starve, so treat
+    // its absence as a full positive signal (1) rather than missing evidence.
+    const starveTerm = a.downstream ? clamp(a.downstream.starvedRatio) : 1;
+    a.confidence =
+        W_UTIL   * clamp(a.avgUtil)
+      + W_BLOCK  * (1 - a.blockedRatio / BLOCKED_MAX)
+      + W_STARVE * starveTerm
+      + W_FILL   * clamp(a.inputFill);
+    constraints.push(a);
+  }
+  constraints.sort((x, y) => y.confidence - x.confidence);
+
+  const constraintStationIds = new Set(constraints.map(a => a.stationId));
+  const primaryStationId     = constraints[0]?.stationId ?? null;
+
+  // Write flags + flowState onto each machine (station-level verdict).
   machineMetrics.forEach(mm => {
-    const s = stationStats.get(mm.stationId) ?? { utilSum: 0, count: 0 };
-    s.utilSum += mm.utilization;
-    s.count   += 1;
-    stationStats.set(mm.stationId, s);
+    const a = stationAgg.get(mm.stationId);
+    mm.bottleneck          = constraintStationIds.has(mm.stationId);
+    mm.isPrimaryConstraint = mm.stationId === primaryStationId;
+    mm.flowState =
+        mm.bottleneck                 ? 'CONSTRAINT'
+      : a.blockedRatio >= BLOCKED_MAX  ? 'BLOCKED_BY_DOWNSTREAM'
+      : a.starvedRatio >= STARVED_MIN  ? 'STARVED_BY_UPSTREAM'
+      :                                  'BALANCED';
   });
 
-  const bottleneckStations = [...stationStats.entries()]
-    .map(([stationId, s]) => ({ stationId, avgUtil: s.count > 0 ? s.utilSum / s.count : 0 }))
-    .filter(s => s.avgUtil > BOTTLENECK_UTIL_THRESHOLD)
-    .sort((a, b) => b.avgUtil - a.avgUtil);
+  // Source-starved guard: only relevant when NO internal constraint was found.
+  const outputBuffers = new Set(
+    [...stationAgg.values()].map(a => a.outputBufferId).filter(id => id != null)
+  );
+  const firstStation = [...stationAgg.values()].find(a => !outputBuffers.has(a.inputBufferId)) ?? null;
+  const sourceStarved = firstStation != null && firstStation.starvedRatio >= STARVED_MIN;
+  const anyBusy = [...stationAgg.values()].some(a => a.avgUtil > BOTTLENECK_UTIL_THRESHOLD);
 
-  const bottleneckStationIds = new Set(bottleneckStations.map(s => s.stationId));
-  machineMetrics.forEach(mm => {
-    if (bottleneckStationIds.has(mm.stationId)) mm.bottleneck = true;
-  });
-
+  // Suggestions: one spawn per constraint with room, ranked by confidence.
   const suggestions = [];
-  for (const { stationId } of bottleneckStations) {
-    const stationMachines = machineMetrics.filter(mm => mm.stationId === stationId);
+  for (const a of constraints) {
+    const stationMachines = machineMetrics.filter(mm => mm.stationId === a.stationId);
     if (stationMachines.length >= MAX_MACHINES_PER_STATION) continue;
     const rep = stationMachines[0];
     suggestions.push({
       type: 'add-parallel-machine',
-      stationId,
+      stationId: a.stationId,
       machineId: rep.id,
-      label: `${rep.id} (${rep.name}) ist ein Engpass - passe die Cycle Time an oder füge eine parallele Maschine hinzu, um den Durchsatz zu erhöhen.`,
+      avgUtil: a.avgUtil,
+      threshold: BOTTLENECK_UTIL_THRESHOLD,
+      confidence: Math.round(a.confidence * 100) / 100,
+      flowState: 'CONSTRAINT',
+      label: `${rep.id} (${rep.name}) ist der Engpass - passe die Cycle Time an oder füge eine parallele Maschine hinzu, um den Durchsatz zu erhöhen.`,
+      reason: (() => {
+        const util  = Math.round(a.avgUtil * 100);
+        const block = Math.round(a.blockedRatio * 100);
+        const fill  = Math.round(a.inputFill * 100);
+        const downClause = a.downstream
+          ? ` und die nachgelagerte Station wartet (${Math.round(a.downstream.starvedRatio * 100)}% Leerlauf)`
+          : ' (letzte Station der Linie)';
+        return `Erkannt, weil Station ${a.stationId} der Engpass ist: ${util}% Auslastung, `
+             + `nur ${block}% blockiert${downClause} — Teile stauen sich davor `
+             + `(Eingangspuffer ${fill}% voll). Ein blockierter Standort wäre dagegen `
+             + `nur Opfer eines nachgelagerten Engpasses.`;
+      })(),
+    });
+  }
+
+  // Diagnostic note: no internal constraint, but the line is supply-limited or
+  // everything is blocked. Emitted only when no station passed the gates.
+  if (constraints.length === 0 && (sourceStarved || anyBusy)) {
+    suggestions.push({
+      type: 'no-internal-constraint',
+      reason: 'Kein interner Engpass — die Linie wird von der Quelle / der '
+            + 'Ankunftsrate begrenzt (oder staut sich an einem nachgelagerten '
+            + 'Engpass zurück).',
     });
   }
 
