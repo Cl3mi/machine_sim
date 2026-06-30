@@ -5,9 +5,10 @@
   "type": "module",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
-    "test": "node --test 'src/**/*.test.js'"
+    "start":     "node src/server.js",
+    "dev":       "node --watch src/server.js",
+    "test":      "node --test 'src/**/*.test.js'",
+    "gen:nodes": "node tools/generate-nodes-json.js"
   },
   "dependencies": {
     "fastify": "^4.28.0",
