@@ -1,0 +1,26 @@
+@startuml c4-container
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/release/2-7-0/C4_Container.puml
+
+title PlantSim — Container view (with OPC UA)
+
+Person(student, "Student / Lecturer", "Uses browser UI and OPC UA clients")
+
+System_Boundary(plantsim, "PlantSim container") {
+  Container(server,    "Node.js process",  "Fastify",         "Hosts browser UI, SSE, Prometheus, plant engine, OPC UA server")
+  ContainerDb(state,   "In-memory state",  "JS objects",      "Machines, Buffers, Source, Sink (per-session + plant)")
+}
+
+System_Ext(uaexpert,   "UAExpert",         "OPC UA browser")
+System_Ext(client,     "Node.js client",   "node-opcua demo script")
+System_Ext(prom,       "Prometheus",       "scrape /metrics")
+System_Ext(grafana,    "Grafana",          "dashboards")
+
+Rel(student, server,   "Browser UI",   "HTTP, SSE :3000")
+Rel(student, uaexpert, "Browses plant")
+Rel(uaexpert, server,  "Subscribes / calls methods", "OPC UA :4840")
+Rel(client,   server,  "Subscribes",   "OPC UA :4840")
+Rel(prom,     server,  "Scrapes",      "HTTP :3000/metrics")
+Rel(grafana,  prom,    "Queries")
+
+Rel(server, state, "Reads / mutates")
+@enduml
