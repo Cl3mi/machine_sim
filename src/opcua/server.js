@@ -12,6 +12,7 @@ import {
   OPCUAServer, SecurityPolicy, MessageSecurityMode, Variant, DataType, StatusCodes,
 } from 'node-opcua';
 import { buildNodeset } from './nodeset.js';
+import * as controls from '../controls.js';
 
 const NAMESPACE_URI = 'urn:mci:plantsim';
 
@@ -60,24 +61,51 @@ function installFolder(ns, parent, node, path) {
   });
 }
 
-function installNode(ns, parent, node, path) {
+function installMethod(ns, parent, node, path, engine) {
+  const dt = (a) => dataTypeMap[a.dataType] ?? DataType.Double;
+
+  const method = ns.addMethod(parent, {
+    browseName: node.browseName,
+    nodeId:     nodeIdFor(path),
+    inputArguments:  (node.inputArgs  ?? []).map(a => ({ name: a.name, dataType: dt(a) })),
+    outputArguments: (node.outputArgs ?? []).map(a => ({ name: a.name, dataType: dt(a) })),
+  });
+
+  method.bindMethod((inputArguments, _context, callback) => {
+    try {
+      switch (node.browseName) {
+        case 'Play':     controls.play(engine);  break;
+        case 'Pause':    controls.pause(engine); break;
+        case 'Reset':    controls.reset(engine); break;
+        case 'SetSpeed': {
+          const m = Number(inputArguments[0]?.value);
+          controls.setSpeed(engine, m);
+          break;
+        }
+        default:
+          return callback(null, { statusCode: StatusCodes.BadNotImplemented });
+      }
+      callback(null, { statusCode: StatusCodes.Good, outputArguments: [] });
+    } catch (err) {
+      callback(null, { statusCode: StatusCodes.BadInvalidArgument });
+    }
+  });
+}
+
+function installNode(ns, parent, node, path, engine) {
   const childPath = [...path, node.browseName];
+  if (node.kind === 'variable') return installVariable(ns, parent, node, childPath);
+  if (node.kind === 'method')   return installMethod(ns, parent, node, childPath, engine);
+
   // Direct children of rootFolder.objects must use organizedBy, not componentOf.
   const topLevel = path.length === 0;
-  if (node.kind === 'variable') {
-    installVariable(ns, parent, node, childPath);
-    return;
-  }
-  let installed;
-  if (node.kind === 'folder')      installed = installFolder(ns, parent, node, childPath);
-  else if (node.kind === 'object') installed = installObject(ns, parent, node, childPath, topLevel);
-  else if (node.kind === 'method') {
-    // Methods are installed in a later task — skip for now.
-    return;
-  } else throw new Error(`Unknown node kind ${node.kind}`);
+  const installed =
+    node.kind === 'folder' ? installFolder(ns, parent, node, childPath) :
+    node.kind === 'object' ? installObject(ns, parent, node, childPath, topLevel) :
+    (() => { throw new Error(`Unknown node kind ${node.kind}`); })();
 
   for (const child of node.children ?? []) {
-    installNode(ns, installed, child, childPath);
+    installNode(ns, installed, child, childPath, engine);
   }
 }
 
@@ -113,7 +141,7 @@ export async function startOpcuaServer({ engine, port = 4840 }) {
   }
 
   const tree = buildNodeset(engine);
-  installNode(ns, addressSpace.rootFolder.objects, tree, []);
+  installNode(ns, addressSpace.rootFolder.objects, tree, [], engine);
 
   await server.start();
   return server;

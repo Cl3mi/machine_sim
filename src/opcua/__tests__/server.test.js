@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { OPCUAClient, AttributeIds, TimestampsToReturn, ClientSubscription, ClientMonitoredItem } from 'node-opcua';
+import { OPCUAClient, AttributeIds, TimestampsToReturn, ClientSubscription, ClientMonitoredItem, StatusCodes, Variant, DataType } from 'node-opcua';
 
 import { SimulationEngine } from '../../simulation/engine.js';
 import { DEFAULT_CONFIG }    from '../../simulation/config.js';
@@ -74,6 +74,53 @@ test('subscription delivers updates when engine state mutates', async () => {
       assert.ok(received.includes(11), `expected 11 in ${received}`);
 
       await sub.terminate();
+    } finally {
+      await session.close();
+      await client.disconnect();
+    }
+  });
+});
+
+test('Line.Methods.Pause stops the engine', async () => {
+  await withServer(async (engine) => {
+    engine.play();
+    assert.equal(engine.getState().running, true);
+
+    const { client, session } = await connectClient();
+    try {
+      const result = await session.call({
+        objectId: 'ns=1;s=Line.Methods',
+        methodId: 'ns=1;s=Line.Methods.Pause',
+        inputArguments: [],
+      });
+      assert.equal(result.statusCode.value, StatusCodes.Good.value);
+      assert.equal(engine.getState().running, false);
+    } finally {
+      await session.close();
+      await client.disconnect();
+    }
+  });
+});
+
+test('Line.Methods.SetSpeed updates engine speed; rejects 0', async () => {
+  await withServer(async (engine) => {
+    const { client, session } = await connectClient();
+    try {
+      let result = await session.call({
+        objectId: 'ns=1;s=Line.Methods',
+        methodId: 'ns=1;s=Line.Methods.SetSpeed',
+        inputArguments: [new Variant({ dataType: DataType.Double, value: 5 })],
+      });
+      assert.equal(result.statusCode.value, StatusCodes.Good.value);
+      assert.equal(engine.getState().speed, 5);
+
+      result = await session.call({
+        objectId: 'ns=1;s=Line.Methods',
+        methodId: 'ns=1;s=Line.Methods.SetSpeed',
+        inputArguments: [new Variant({ dataType: DataType.Double, value: 0 })],
+      });
+      assert.notEqual(result.statusCode.value, StatusCodes.Good.value);
+      assert.equal(engine.getState().speed, 5); // unchanged
     } finally {
       await session.close();
       await client.disconnect();
