@@ -254,11 +254,11 @@ try {
 
 async function shutdown(signal) {
   console.log(`received ${signal}, shutting down`);
+  try { await app.close(); } catch (_) {}
   try {
     const opcua = await opcuaServerPromise;
     await opcua.shutdown(1000);
   } catch (_) { /* server may not have started */ }
-  try { await app.close(); } catch (_) {}
   process.exit(0);
 }
 process.on('SIGINT',  () => shutdown('SIGINT'));
