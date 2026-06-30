@@ -69,3 +69,18 @@ test('toJSON output is stable and contains all browseNames', () => {
   }
   check(json);
 });
+
+test('toJSON output equals the committed docs/opcua/nodes.json', async () => {
+  const { readFileSync } = await import('fs');
+  const { fileURLToPath } = await import('url');
+  const { dirname, join } = await import('path');
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const committedPath = join(__dirname, '..', '..', '..', 'docs', 'opcua', 'nodes.json');
+  const committed = JSON.parse(readFileSync(committedPath, 'utf8'));
+
+  const engine = new SimulationEngine(DEFAULT_CONFIG);
+  const live = toJSON(buildNodeset(engine));
+
+  assert.deepEqual(live, committed,
+    'nodeset has drifted from docs/opcua/nodes.json — run `npm run gen:nodes`');
+});
