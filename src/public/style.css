@@ -90,7 +90,7 @@ header {
 #pipeline-svg {
   display: block;
   width: 100%;
-  height: 400px;
+  height: 500px;
 }
 
 /* ── Controls section ────────────────────────────────────────────────────── */
@@ -136,6 +136,22 @@ button:active { transform: scale(0.96); }
 #btn-play   { background: var(--processing); color: #fff; }
 #btn-pause  { background: var(--starved);    color: #fff; }
 #btn-reset  { background: var(--surface2);   color: var(--text); border: 1px solid var(--border); }
+
+/* Start prompt shown before the run has begun (paused at tick 0). */
+#start-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--surface2);
+  border: 1px solid var(--processing);
+  border-radius: 8px;
+}
+#start-banner[hidden] { display: none; }
+#start-banner .start-banner-text { font-size: 0.9rem; font-weight: 600; color: var(--text); }
+#btn-start { background: var(--processing); color: #fff; font-weight: 700; }
 
 .speed-btn {
   background: var(--surface2);
@@ -369,6 +385,14 @@ th .info-icon::after {
   top: calc(100% + 8px);
 }
 
+/* Suggestion-banner tooltips point downward too: the banner sits high on the
+   page and this tip is long (many lines), so an upward tooltip would clip at
+   the top of the viewport. */
+#suggestion-banner .info-icon::after {
+  bottom: auto;
+  top: calc(100% + 8px);
+}
+
 /* Prevent slider label's span rule from overriding info icon colour */
 .slider-group label .info-icon { color: var(--text-dim); font-weight: 700; }
 
@@ -545,6 +569,25 @@ g[id^="elem-M"]:hover .machine-rect:not(.selected):not(.bottleneck) {
   color: var(--text);
   line-height: 1.1;
 }
+.md-stat-gate {
+  grid-column: 1 / -1;
+}
+.md-stat-gate .md-stat-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.md-stat-gate #md-reject-val {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.md-stat-gate input[type="range"] {
+  width: 100%;
+  margin-top: 6px;
+}
 
 .md-stack {
   display: flex;
@@ -609,3 +652,64 @@ g[id^="elem-M"]:hover .machine-rect:not(.selected):not(.bottleneck) {
 }
 .particle-tail.scrap { fill: var(--blocked); }
 .particle-tail.hidden { visibility: hidden; }
+
+/* ── Spawn suggestion banner ─────────────────────────────────────────────── */
+#suggestion-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #7c2d12;
+  border-bottom: 1px solid #f97316;
+  color: #fdba74;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+#suggestion-banner[hidden] { display: none; }
+/* The "no internal bottleneck" note is informational, not a warning — recolor
+   the whole banner green when it is the only thing shown (the note is emitted
+   only when no constraint was found, so it never shares the banner with a warning). */
+#suggestion-banner:has(.sg-note) {
+  background: #064e3b;
+  border-bottom-color: #22c55e;
+  color: #bbf7d0;
+}
+#suggestion-banner .sg-note { color: #bbf7d0; }
+#suggestion-banner .sg-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+#suggestion-banner .sg-btn {
+  background: #f97316;
+  color: #1a1d27;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* ── Machine-detail station controls ─────────────────────────────────────── */
+.md-station-controls {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 10px;
+}
+.md-station-controls #md-spawn  { background: var(--processing); color: #fff; }
+.md-station-controls #md-remove { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+.md-station-controls button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Transient confirmation toast (e.g. "Preset loaded"). Auto-dismissed by app.js. */
+.toast {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1f8a4c;
+  color: #fff;
+  padding: 0.6rem 1.1rem;
+  border-radius: 6px;
+  font-weight: 600;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  z-index: 1000;
+}
+.toast[hidden] { display: none; }

@@ -12,7 +12,16 @@
  * controls.js wrappers (this file does not import controls).
  */
 
+import { calculateMetrics } from '../metrics/collector.js';
+
 const sum = (arr) => arr.reduce((a, b) => a + b, 0);
+
+function bottleneckId(engine) {
+  const metrics = calculateMetrics(engine.getState());
+  const primary = metrics.machines.find(m => m.isPrimaryConstraint)
+               ?? metrics.machines.find(m => m.bottleneck);
+  return primary?.id ?? '';
+}
 
 function machineUtilization(m) {
   const total = m.ticksProcessing + m.ticksBlocked + m.ticksStarved + m.ticksIdle;
@@ -77,11 +86,12 @@ export function buildNodeset(engine) {
     browseName: 'Line',
     kind: 'object',
     children: [
-      { browseName: 'Throughput',  kind: 'variable', dataType: 'Double', get: () => throughput(engine) },
-      { browseName: 'AvgLeadTime', kind: 'variable', dataType: 'Double', get: () => avgLeadTime(engine) },
-      { browseName: 'Tick',        kind: 'variable', dataType: 'UInt32', get: () => engine.tick },
-      { browseName: 'State',       kind: 'variable', dataType: 'String', get: () => engine.getState().running ? 'RUNNING' : 'PAUSED' },
-      { browseName: 'Speed',       kind: 'variable', dataType: 'Double', get: () => engine.getState().speed },
+      { browseName: 'Throughput',   kind: 'variable', dataType: 'Double', get: () => throughput(engine) },
+      { browseName: 'AvgLeadTime',  kind: 'variable', dataType: 'Double', get: () => avgLeadTime(engine) },
+      { browseName: 'Tick',         kind: 'variable', dataType: 'UInt32', get: () => engine.tick },
+      { browseName: 'State',        kind: 'variable', dataType: 'String', get: () => engine.getState().running ? 'RUNNING' : 'PAUSED' },
+      { browseName: 'Speed',        kind: 'variable', dataType: 'Double', get: () => engine.getState().speed },
+      { browseName: 'BottleneckId', kind: 'variable', dataType: 'String', get: () => bottleneckId(engine) },
       {
         browseName: 'Source', kind: 'object',
         children: [

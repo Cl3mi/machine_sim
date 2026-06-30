@@ -31,6 +31,36 @@ const gAvgLeadTime = new Gauge({
   registers: [register],
 });
 
+const gLeadTimeP50 = new Gauge({
+  name: 'plantsim_lead_time_p50_ticks',
+  help: 'Median (p50) lead time over recent completed parts, in simulation ticks',
+  registers: [register],
+});
+
+const gLeadTimeP95 = new Gauge({
+  name: 'plantsim_lead_time_p95_ticks',
+  help: '95th-percentile lead time over recent completed parts, in simulation ticks',
+  registers: [register],
+});
+
+const gLeadTimeMax = new Gauge({
+  name: 'plantsim_lead_time_max_ticks',
+  help: 'Maximum lead time over recent completed parts, in simulation ticks',
+  registers: [register],
+});
+
+const gLeadTimeStdDev = new Gauge({
+  name: 'plantsim_lead_time_stddev_ticks',
+  help: 'Standard deviation of lead time over recent completed parts, in simulation ticks',
+  registers: [register],
+});
+
+const gFlowEfficiency = new Gauge({
+  name: 'plantsim_flow_efficiency_ratio',
+  help: 'Value-added ratio 0–1: theoretical processing time / average lead time',
+  registers: [register],
+});
+
 const gPartsInSystem = new Gauge({
   name: 'plantsim_parts_in_system',
   help: 'Number of parts currently in the system (buffers + machines)',
@@ -53,7 +83,14 @@ const gSimTime = new Gauge({
 
 const gMachineUtilization = new Gauge({
   name: 'plantsim_machine_utilization_ratio',
-  help: 'Machine utilization 0–1 (time PROCESSING / total ticks)',
+  help: 'Machine utilization 0–1 (fraction of recent-window ticks spent PROCESSING)',
+  labelNames: ['machine_id', 'machine_name'],
+  registers: [register],
+});
+
+const gMachineThroughput = new Gauge({
+  name: 'plantsim_machine_throughput_per_100_ticks',
+  help: 'Parts processed by this machine per 100 simulation ticks',
   labelNames: ['machine_id', 'machine_name'],
   registers: [register],
 });
@@ -86,6 +123,13 @@ const gMachineBottleneck = new Gauge({
   registers: [register],
 });
 
+const gMachinePrimaryConstraint = new Gauge({
+  name: 'plantsim_machine_is_primary_constraint',
+  help: '1 if this machine is the single primary constraint (highest-confidence bottleneck), 0 otherwise',
+  labelNames: ['machine_id', 'machine_name'],
+  registers: [register],
+});
+
 // ── Per-buffer gauges ──────────────────────────────────────────────────────
 
 const gBufferLoad = new Gauge({
@@ -109,17 +153,33 @@ export function updateMetrics(engineState) {
 
   gThroughput.set(m.throughput);
   gAvgLeadTime.set(m.avgLeadTime);
+  gLeadTimeP50.set(m.leadTimeStats.p50);
+  gLeadTimeP95.set(m.leadTimeStats.p95);
+  gLeadTimeMax.set(m.leadTimeStats.max);
+  gLeadTimeStdDev.set(m.leadTimeStats.stdDev);
+  gFlowEfficiency.set(m.flowEfficiency);
   gPartsInSystem.set(m.partsInSystem);
   gScrappedParts.set(m.scrappedParts);
   gSimTime.set(m.simTime);
 
+  // Clear per-machine series so removed machines don't linger as stale labels.
+  gMachineUtilization.reset();
+  gMachineThroughput.reset();
+  gMachineBlockedTime.reset();
+  gMachineStarvedTime.reset();
+  gMachineAvgQueueWait.reset();
+  gMachineBottleneck.reset();
+  gMachinePrimaryConstraint.reset();
+
   for (const machine of m.machines) {
     const labels = { machine_id: machine.id, machine_name: machine.name };
     gMachineUtilization.set(labels,     machine.utilization);
+    gMachineThroughput.set(labels,      machine.throughput);
     gMachineBlockedTime.set(labels,     machine.blockedTime);
     gMachineStarvedTime.set(labels,     machine.starvedTime);
     gMachineAvgQueueWait.set(labels,    machine.avgQueueWait);
     gMachineBottleneck.set(labels,      machine.bottleneck ? 1 : 0);
+    gMachinePrimaryConstraint.set(labels, machine.isPrimaryConstraint ? 1 : 0);
   }
 
   for (const buffer of m.buffers) {

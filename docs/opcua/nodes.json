@@ -28,6 +28,11 @@
       "dataType": "Double"
     },
     {
+      "browseName": "BottleneckId",
+      "kind": "variable",
+      "dataType": "String"
+    },
+    {
       "browseName": "Source",
       "kind": "object",
       "children": [

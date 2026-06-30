@@ -5,7 +5,8 @@
  * Architecture:
  *   - Each "tick" advances the simulation clock by 1 unit of simulated time.
  *   - Processing order within a tick: advance machines → pull/push parts → update states.
- *   - We process from the END of the line to the START each tick. This prevents
+ *   - Machines are processed in descending station order (downstream stations
+ *     before upstream ones), computed by walking the buffer graph. This prevents
  *     a part from moving through multiple stations in a single tick (the "domino effect"
  *     that would make a short line appear to have infinite throughput).
  *
@@ -20,6 +21,18 @@
 import EventEmitter from 'events';
 import { Part, Source, Buffer, Machine, Sink, ScrapSink, MachineState } from './entities.js';
 import { DEFAULT_CONFIG } from './config.js';
+
+// Maximum machines allowed per station (original + 3 parallel).
+const MAX_MACHINES_PER_STATION = 4;
+const SPAWN_SUFFIXES = ['b', 'c', 'd'];   // M3 → M3b → M3c → M3d
+
+// Utilization (and therefore the bottleneck verdict) is measured over the most
+// recent UTIL_WINDOW_TICKS ticks, not the whole run. This lets the verdict track
+// *current* conditions: after a cycle-time change or a spawned machine resolves a
+// constraint, the old high-utilization history ages out within this many ticks
+// and the station stops being flagged — instead of a lifetime average dragging
+// the banner/marker on long after the constraint is gone.
+const UTIL_WINDOW_TICKS = 300;
 
 export class SimulationEngine extends EventEmitter {
   constructor(config = DEFAULT_CONFIG) {
@@ -76,9 +89,25 @@ export class SimulationEngine extends EventEmitter {
     this._reset();
   }
 
+  // Loads an arbitrary full config (e.g. a curated preset) — same effect as
+  // resetToDefaults() but with a caller-supplied config instead of DEFAULT_CONFIG.
+  // Deep-clones so the caller's object can't mutate engine state. Stays paused
+  // at tick 0; call play() explicitly.
+  loadConfig(config) {
+    this.pause();
+    this._nextPartId = 1;
+    this._config = JSON.parse(JSON.stringify(config));
+    this._reset();
+  }
+
   // Live config update — students can change parameters while the sim runs.
   // Also mirrors changes into _config so that reset() preserves them.
   updateConfig(params) {
+    // Changes that can shift which station is the constraint reset the
+    // utilization window (see _lastFlowChangeTick); plain speed changes do not.
+    const flowChange = ['sourceInterval', 'cycleTime', 'rejectRate', 'bufferCapacity']
+      .some(k => params[k] !== undefined);
+
     if (params.speed !== undefined) this.setSpeed(params.speed);
 
     if (params.sourceInterval !== undefined) {
@@ -115,6 +144,77 @@ export class SimulationEngine extends EventEmitter {
         // If parts now exceed new capacity, leave them in (don't eject — too disruptive)
       }
     }
+
+    if (flowChange) this._lastFlowChangeTick = this.tick;
+  }
+
+  // Add a parallel machine to a station. The new machine shares the station's
+  // input/output buffers and copies its cycleTime / rejectRate. Returns
+  // { ok, id?, reason? }. New machines are appended to _config so reset() keeps
+  // them; resetToDefaults() drops them.
+  spawnMachine({ stationId } = {}) {
+    const stationMachines = this.machines.filter(m => m.stationId === stationId);
+    if (stationMachines.length === 0) return { ok: false, reason: 'unknown-station' };
+    if (stationMachines.length >= MAX_MACHINES_PER_STATION) {
+      return { ok: false, reason: 'cap-reached' };
+    }
+
+    const template = stationMachines[0];
+    const usedSuffixes = new Set(
+      stationMachines
+        .map(m => m.id.slice(template.id.length))
+        .filter(Boolean)
+    );
+    const suffix = SPAWN_SUFFIXES.find(s => !usedSuffixes.has(s));
+    if (!suffix) return { ok: false, reason: 'cap-reached' };
+    const newId = template.id + suffix;
+
+    const cfgEntry = {
+      id: newId,
+      stationId,
+      name: template.name,
+      cycleTime: template.cycleTime,
+      rejectRate: template.rejectRate,
+      inputBufferId: template.inputBufferId,
+      outputBufferId: template.outputBufferId,
+    };
+
+    this._config.machines.push(cfgEntry);
+    this.machines.push(new Machine(cfgEntry));
+    this._reindex();
+    this._lastFlowChangeTick = this.tick;
+
+    return { ok: true, id: newId };
+  }
+
+  // Remove a spawned parallel machine. The station's original machine (first in
+  // config order) cannot be removed. If the machine holds a part, the part is
+  // returned to the head of its input buffer; if that buffer is full the part is
+  // dropped. Returns { ok, reason? }.
+  removeMachine({ machineId } = {}) {
+    const machine = this.machines.find(m => m.id === machineId);
+    if (!machine) return { ok: false, reason: 'unknown-machine' };
+
+    const stationMachines = this.machines.filter(m => m.stationId === machine.stationId);
+    if (stationMachines[0].id === machineId) {
+      return { ok: false, reason: 'original-machine' };
+    }
+
+    if (machine.currentPart) {
+      const buf = this._bufferById.get(machine.inputBufferId);
+      if (buf && buf.parts.length < buf.capacity) {
+        machine.currentPart._bufferEnterTick = this.tick;
+        buf.parts.unshift(machine.currentPart);
+      }
+      machine.currentPart = null;
+    }
+
+    this.machines = this.machines.filter(m => m.id !== machineId);
+    this._config.machines = this._config.machines.filter(m => m.id !== machineId);
+    this._reindex();
+    this._lastFlowChangeTick = this.tick;
+
+    return { ok: true };
   }
 
   // Returns the per-tick history recorded since the last reset.
@@ -126,8 +226,19 @@ export class SimulationEngine extends EventEmitter {
 
   // Returns a plain JSON-serialisable snapshot of the current state
   getState() {
+    // Cumulative counters from the start of the utilization window, used to derive
+    // the recent-window tick counts below by subtraction. _history records one row
+    // of cumulative counters per tick (newest last), so the row `ticksBack` back is
+    // the window's baseline. The window spans UTIL_WINDOW_TICKS ticks but never
+    // reaches back past the last flow-affecting change, so a config edit makes the
+    // verdict reflect post-change behaviour almost immediately. When the baseline
+    // row is absent (young run, or a machine spawned more recently) it is treated
+    // as 0, so the window covers the machine's whole life so far.
+    const ticksBack  = Math.min(UTIL_WINDOW_TICKS, this.tick - this._lastFlowChangeTick);
+    const windowBase = this._history[this._history.length - 1 - ticksBack];
     return {
       tick:     this.tick,
+      ticksPerSecond: this._config.ticksPerSecond,
       running:  this._running,
       speed:    this._speed,
       source: {
@@ -140,6 +251,9 @@ export class SimulationEngine extends EventEmitter {
       },
       machines: this.machines.map(m => ({
         id:              m.id,
+        stationId:       m.stationId,
+        inputBufferId:   m.inputBufferId,
+        outputBufferId:  m.outputBufferId,
         name:            m.name,
         cycleTime:       m.cycleTime,
         rejectRate:      m.rejectRate,
@@ -149,6 +263,13 @@ export class SimulationEngine extends EventEmitter {
         ticksBlocked:    m.ticksBlocked,
         ticksStarved:    m.ticksStarved,
         ticksIdle:       m.ticksIdle,
+        // Recent-window counts (last UTIL_WINDOW_TICKS ticks) = current cumulative
+        // minus the cumulative at the window baseline. Used by the collector for
+        // utilization and bottleneck detection so the verdict tracks current flow.
+        winProcessing: m.ticksProcessing - (windowBase?.[`${m.id}_ticksProcessing`] ?? 0),
+        winBlocked:    m.ticksBlocked    - (windowBase?.[`${m.id}_ticksBlocked`]    ?? 0),
+        winStarved:    m.ticksStarved    - (windowBase?.[`${m.id}_ticksStarved`]    ?? 0),
+        winIdle:       m.ticksIdle       - (windowBase?.[`${m.id}_ticksIdle`]       ?? 0),
         partsProcessed:  m.partsProcessed,
         currentPartId:   m.currentPart?.id ?? null,
       })),
@@ -178,6 +299,12 @@ export class SimulationEngine extends EventEmitter {
   _reset() {
     this.tick = 0;
     this._history = [];
+    // Tick of the most recent flow-affecting change (cycle time, machine
+    // spawn/remove, source/buffer edit). The utilization window never looks back
+    // past this point, so after the user changes something the bottleneck verdict
+    // reflects only post-change behaviour and a resolved constraint clears within
+    // a few ticks instead of waiting out the full UTIL_WINDOW_TICKS history.
+    this._lastFlowChangeTick = 0;
 
     const cfg = this._config;
 
@@ -187,8 +314,45 @@ export class SimulationEngine extends EventEmitter {
     this.sink      = new Sink();
     this.scrapSink = new ScrapSink();
 
+    this._reindex();
+
     // Store initial config values so reset always goes back to defaults
     this._initialConfig = JSON.parse(JSON.stringify(cfg));
+  }
+
+  // Rebuild the buffer lookup and station ordering. Call whenever the set of
+  // machines or buffers changes (reset, spawn, remove).
+  _reindex() {
+    this._bufferById = new Map(this.buffers.map(b => [b.id, b]));
+    this._assignStationOrder();
+  }
+
+  // Walk the buffer graph from the source-fed buffer (the one no machine
+  // produces) and assign each station an increasing `order`. Machines sharing a
+  // stationId share an order. Used to process downstream→upstream each tick.
+  _assignStationOrder() {
+    const produced = new Set(
+      this.machines.map(m => m.outputBufferId).filter(id => id != null)
+    );
+    let curId = this.buffers.find(b => !produced.has(b.id))?.id
+              ?? this.buffers[0]?.id;
+
+    const stationOrder = new Map();   // stationId -> order
+    let order = 0;
+    const seen = new Set();
+    while (curId != null && !seen.has(curId)) {
+      seen.add(curId);
+      const here = this.machines.filter(m => m.inputBufferId === curId);
+      if (here.length === 0) break;
+      const stationId = here[0].stationId;
+      if (!stationOrder.has(stationId)) stationOrder.set(stationId, order++);
+      curId = here[0].outputBufferId;   // parallel machines share output
+    }
+    for (const m of this.machines) {
+      m._order = stationOrder.get(m.stationId) ?? 0;
+    }
+    // Machines processed end→start: highest order first.
+    this._processOrder = [...this.machines].sort((a, b) => b._order - a._order);
   }
 
   // ── Private: tick scheduling ───────────────────────────────────────────────
@@ -211,45 +375,31 @@ export class SimulationEngine extends EventEmitter {
     this.source.lastEmitted = false;
 
     // ── STEP 1: Advance machines (count down processing timers) ─────────────
-    // Process from the END of the line backwards to prevent "chain reaction"
-    // where a part moves through multiple machines in one tick.
-    for (let i = this.machines.length - 1; i >= 0; i--) {
-      const machine = this.machines[i];
-      const downstreamBuffer = this.buffers[i]; // BUF after this machine (BUF0..BUF3)
-      // Note: machine index i maps to buffers[i] as downstream
-      // layout: BUF0 → M1(0) → BUF1 → M2(1) → BUF2 → M3(2) → BUF3 → M4(3)
-
-      this._advanceMachine(machine, i);
+    // Process downstream→upstream (highest station order first) to prevent a
+    // part cascading through multiple machines in one tick.
+    for (const machine of this._processOrder) {
+      this._advanceMachine(machine);
     }
 
     // ── STEP 2: Source emits parts ───────────────────────────────────────────
     this._tickSource();
 
-    // ── STEP 3: Pull parts from upstream buffers into starved/idle machines ──
-    // Again process from end to start so we don't cascade
-    for (let i = this.machines.length - 1; i >= 0; i--) {
-      const machine        = this.machines[i];
-      const upstreamBuffer = this.buffers[i];    // buffer *before* this machine
-      // Machines index:  0=M1, 1=M2, 2=M3, 3=M4
-      // Upstream buffers: buffers[0]=BUF0 (before M1), buffers[1]=BUF1, ...
-
+    // ── STEP 3: Pull parts from each machine's input buffer ──────────────────
+    for (const machine of this._processOrder) {
       if (machine.state === MachineState.IDLE || machine.state === MachineState.STARVED) {
-        if (upstreamBuffer.parts.length > 0) {
-          // Pull the oldest part from the upstream buffer
+        const upstreamBuffer = this._bufferById.get(machine.inputBufferId);
+        if (upstreamBuffer && upstreamBuffer.parts.length > 0) {
           const part = upstreamBuffer.parts.shift();
           upstreamBuffer.totalPartsOut++;
 
-          // Accumulate the wait time this part spent in the buffer
           const waitTicks = this.tick - part._bufferEnterTick;
           upstreamBuffer.totalWaitTicks += (waitTicks > 0 ? waitTicks : 0);
 
-          // Load the part into the machine
           part.enteredMachineAt = this.tick;
           machine.currentPart   = part;
           machine.ticksLeft     = machine.cycleTime;
           machine.state         = MachineState.PROCESSING;
         } else {
-          // Nothing in buffer → starved (unless we just finished and are idle momentarily)
           machine.state = MachineState.STARVED;
         }
       }
@@ -320,74 +470,53 @@ export class SimulationEngine extends EventEmitter {
 
   // ── Private: advance one machine for this tick ────────────────────────────
 
-  _advanceMachine(machine, index) {
-    // Downstream buffer is buffers[index] only for M1..M3; M4 pushes to Sink
-    // index 0=M1→BUF1(buffers[1]), 1=M2→BUF2(buffers[2]), 2=M3→BUF3(buffers[3]), 3=M4→SINK
-    // Wait — let's re-map:
-    // Pipeline: BUF0 → M1 → BUF1 → M2 → BUF2 → M3 → BUF3 → M4 → SINK
-    // machine index:  0        1        2        3
-    // upstream buf:   0        1        2        3
-    // downstream buf: 1        2        3      (SINK for index 3)
-
+  _advanceMachine(machine) {
     if (machine.state === MachineState.BLOCKED) {
-      // Try to push the finished part downstream now that a slot may have opened
-      this._tryPushDownstream(machine, index);
+      this._tryPushDownstream(machine);
       return;
     }
 
     if (machine.state !== MachineState.PROCESSING) return;
 
     machine.ticksLeft--;
-
     if (machine.ticksLeft > 0) return; // still working
 
-    // ── Processing complete ──────────────────────────────────────────────────
     machine.partsProcessed++;
-    const part = machine.currentPart;
 
-    // M2 quality gate: randomly reject parts based on rejectRate
+    // Quality gate: randomly reject parts based on rejectRate
     if (machine.rejectRate > 0 && Math.random() < machine.rejectRate) {
-      // Part is scrapped
       this.scrapSink.partsReceived++;
       machine.currentPart = null;
       machine.state       = MachineState.IDLE;
-      // Machine is now free — it will be loaded in Step 3 if buffer has parts
       return;
     }
 
-    // Try to push the finished part into the downstream buffer (or Sink)
-    this._tryPushDownstream(machine, index);
+    this._tryPushDownstream(machine);
   }
 
-  _tryPushDownstream(machine, index) {
+  _tryPushDownstream(machine) {
     const part = machine.currentPart;
 
-    if (index === this.machines.length - 1) {
-      // Last machine (M4) → push to Sink
+    if (machine.outputBufferId == null) {
+      // Pushes to the Sink
       part.completedAt = this.tick;
       this.sink.partsReceived++;
       this.sink.completedParts.push(part);
-      // Trim to last 200 to prevent unbounded growth
-      if (this.sink.completedParts.length > 200) {
-        this.sink.completedParts.shift();
-      }
+      if (this.sink.completedParts.length > 200) this.sink.completedParts.shift();
+      machine.currentPart = null;
+      machine.state       = MachineState.IDLE;
+      return;
+    }
+
+    const downstreamBuffer = this._bufferById.get(machine.outputBufferId);
+    if (downstreamBuffer && downstreamBuffer.parts.length < downstreamBuffer.capacity) {
+      part._bufferEnterTick = this.tick;
+      downstreamBuffer.parts.push(part);
       machine.currentPart = null;
       machine.state       = MachineState.IDLE;
     } else {
-      // Push to downstream buffer (index+1)
-      const downstreamBuffer = this.buffers[index + 1];
-      if (downstreamBuffer.parts.length < downstreamBuffer.capacity) {
-        // Buffer has space — push the part
-        part._bufferEnterTick = this.tick;
-        downstreamBuffer.parts.push(part);
-        machine.currentPart = null;
-        machine.state       = MachineState.IDLE;
-      } else {
-        // Buffer full → machine is BLOCKED
-        // The part stays in the machine until space opens up.
-        // This back-pressure propagates upstream (starving earlier machines).
-        machine.state = MachineState.BLOCKED;
-      }
+      // Buffer full → BLOCKED (back-pressure propagates upstream)
+      machine.state = MachineState.BLOCKED;
     }
   }
 

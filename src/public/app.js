@@ -7,6 +7,9 @@
  * update the DOM on each push.
  */
 
+import { shouldFreezeParticles, shouldShowStartBanner } from './sim-status.js';
+import { suggestionSignature } from './suggestions-view.js';
+
 // ── Layout constants (SVG coordinate system: 0 0 1400 300) ──────────────────
 
 const SVG_W  = 1200;
@@ -22,38 +25,125 @@ const MACH_W = 110; const MACH_H = 80;
 const BUF_W  = 70;  const BUF_H  = 60;
 const SINK_W = 70;  const SINK_H = 70;
 
-// Horizontal positions of each element (left edge of its bounding box)
-const LAYOUT = {
-  SOURCE: 20,
-  BUF0:   130,
-  M1:     230,
-  BUF1:   370,
-  M2:     460,
-  BUF2:   600,
-  M3:     690,
-  BUF3:   830,
-  M4:     920,
-  SINK:   1060,
-  SCRAP:  560,  // x of scrap box (below M2 fork)
-};
+// Column spacing for the computed layout.
+const COL_GAP = 34;   // horizontal gap between columns
+const VGAP    = 16;   // vertical gap between stacked parallel machines
+const X0      = 20;   // left margin
 
-// ── Connector geometry (resolved at buildPipeline time) ───────────────────
-// For each pipe along which particles can travel: how to compute the
-// (x, y) coordinate of a particle at parametric position t in [0, 1].
-// Also: the buffer (if any) whose fullness causes particles to jam here.
+// Populated by computeLayout()/buildPipeline(): the active layout for this frame.
+// { columns, pos:{ source, sink, scrap, buffers:{id->{x,y}}, machines:{id->{x,y,cx,cy}} },
+//   connectors:[{ id, destBufferId, line|path geometry }], srcBufId, viewBox }
+let layout = null;
 
-const CONNECTORS = [
-  { id: 'conn-src-b0',  destBufferId: 'BUF0' },
-  { id: 'conn-b0-m1',   destBufferId: null   },  // dest is machine; never jams
-  { id: 'conn-m1-b1',   destBufferId: 'BUF1' },
-  { id: 'conn-b1-m2',   destBufferId: null   },
-  { id: 'conn-m2-b2',   destBufferId: 'BUF2' },
-  { id: 'conn-b2-m3',   destBufferId: null   },
-  { id: 'conn-m3-b3',   destBufferId: 'BUF3' },
-  { id: 'conn-b3-m4',   destBufferId: null   },
-  { id: 'conn-m4-sink', destBufferId: null   },  // sink unbounded
-  { id: 'conn-m2-scrap',destBufferId: null   },  // scrap unbounded
-];
+// Build a left→right column layout from the simulation state. Parallel machines
+// in a station stack vertically, centered on the main line.
+function computeLayout(state) {
+  const bufById = {};
+  for (const b of state.buffers) bufById[b.id] = b;
+
+  // The source-fed buffer is the one no machine produces.
+  const produced = new Set(state.machines.map(m => m.outputBufferId).filter(id => id != null));
+  const srcBuf = state.buffers.find(b => !produced.has(b.id)) ?? state.buffers[0];
+
+  // Group machines into stations by input buffer.
+  const stationByInput = {};
+  for (const m of state.machines) (stationByInput[m.inputBufferId] ??= []).push(m);
+
+  // Walk the chain: SOURCE, then [buffer, station]..., then SINK.
+  const columns = [{ kind: 'source' }];
+  let curId = srcBuf?.id;
+  const seen = new Set();
+  while (curId != null && !seen.has(curId)) {
+    seen.add(curId);
+    columns.push({ kind: 'buffer', buffer: bufById[curId] });
+    const machines = stationByInput[curId] ?? [];
+    if (machines.length === 0) break;
+    columns.push({ kind: 'station', machines, stationId: machines[0].stationId });
+    curId = machines[0].outputBufferId;
+  }
+  columns.push({ kind: 'sink' });
+
+  const widthOf = (c) =>
+    c.kind === 'source' ? SRC_W :
+    c.kind === 'buffer' ? BUF_W :
+    c.kind === 'station' ? MACH_W : SINK_W;
+
+  let x = X0;
+  for (const c of columns) { c.x = x; x += widthOf(c) + COL_GAP; }
+  const totalW = x - COL_GAP + X0;
+
+  const pos = { machines: {}, buffers: {}, source: null, sink: null, scrap: null };
+  let minY = MAIN_Y - SRC_H / 2;
+  let maxY = MAIN_Y + SRC_H / 2;
+
+  for (const c of columns) {
+    if (c.kind === 'source')  pos.source = { x: c.x };
+    else if (c.kind === 'sink') pos.sink = { x: c.x };
+    else if (c.kind === 'buffer') pos.buffers[c.buffer.id] = { x: c.x, y: MAIN_Y - BUF_H / 2 };
+    else if (c.kind === 'station') {
+      const k = c.machines.length;
+      c.machines.forEach((m, j) => {
+        const cy = MAIN_Y + (j - (k - 1) / 2) * (MACH_H + VGAP);
+        const y  = cy - MACH_H / 2;
+        pos.machines[m.id] = { x: c.x, y, cx: c.x + MACH_W / 2, cy };
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y + MACH_H);
+      });
+    }
+  }
+
+  // Scrap sink sits below the lowest element, under the first rejecting station.
+  // There is a single shared scrap sink even when several stations are quality
+  // gates; each gate still gets its own scrap connector below, the sink just
+  // anchors under the first one.
+  const rejectCol = columns.find(c => c.kind === 'station' && c.machines.some(m => m.rejectRate > 0));
+  const scrapY = maxY + 40;
+  const scrapX = rejectCol ? rejectCol.x : totalW / 2;
+  pos.scrap = { x: scrapX, y: scrapY };
+  maxY = scrapY + SINK_H;
+
+  // Connectors.
+  const connectors = [];
+  if (pos.source && pos.buffers[srcBuf.id]) {
+    connectors.push({
+      id: 'conn-src-b0', destBufferId: srcBuf.id,
+      x1: pos.source.x + SRC_W, y1: MAIN_Y, x2: pos.buffers[srcBuf.id].x, y2: MAIN_Y,
+    });
+  }
+  for (const m of state.machines) {
+    const mp = pos.machines[m.id];
+    const inBuf = pos.buffers[m.inputBufferId];
+    if (inBuf) connectors.push({
+      id: `conn-in-${m.id}`, destBufferId: null,
+      x1: inBuf.x + BUF_W, y1: MAIN_Y, x2: mp.x, y2: mp.cy,
+    });
+    if (m.outputBufferId == null) {
+      connectors.push({
+        id: `conn-out-${m.id}`, destBufferId: null,
+        x1: mp.x + MACH_W, y1: mp.cy, x2: pos.sink.x, y2: MAIN_Y,
+      });
+    } else {
+      const outBuf = pos.buffers[m.outputBufferId];
+      if (outBuf) connectors.push({
+        id: `conn-out-${m.id}`, destBufferId: m.outputBufferId,
+        x1: mp.x + MACH_W, y1: mp.cy, x2: outBuf.x, y2: MAIN_Y,
+      });
+    }
+    if (m.rejectRate > 0) {
+      const sy = pos.scrap.y + SINK_H / 2;
+      connectors.push({
+        id: `conn-scrap-${m.id}`, destBufferId: null, isPath: true,
+        d: `M ${mp.cx} ${mp.y + MACH_H} L ${mp.cx} ${sy} L ${pos.scrap.x} ${sy}`,
+      });
+    }
+  }
+
+  const vbY = minY - 20;
+  return {
+    columns, pos, connectors, srcBufId: srcBuf.id,
+    viewBox: { x: 0, y: vbY, w: totalW, h: (maxY - vbY) + 20 },
+  };
+}
 
 // Filled by cacheConnectorGeometry(); { connectorId -> (t) => {x, y} }
 const connectorPointAt = {};
@@ -61,7 +151,7 @@ const connectorPointAt = {};
 const connectorLength = {};
 
 function cacheConnectorGeometry() {
-  for (const { id } of CONNECTORS) {
+  for (const { id } of layout.connectors) {
     const node = document.getElementById(id);
     if (!node) continue;
 
@@ -70,16 +160,11 @@ function cacheConnectorGeometry() {
       const y1 = parseFloat(node.getAttribute('y1'));
       const x2 = parseFloat(node.getAttribute('x2'));
       const y2 = parseFloat(node.getAttribute('y2'));
-      const len = Math.hypot(x2 - x1, y2 - y1);
-      connectorLength[id] = len;
-      connectorPointAt[id] = (t) => ({
-        x: x1 + (x2 - x1) * t,
-        y: y1 + (y2 - y1) * t,
-      });
+      connectorLength[id]  = Math.hypot(x2 - x1, y2 - y1);
+      connectorPointAt[id] = (t) => ({ x: x1 + (x2 - x1) * t, y: y1 + (y2 - y1) * t });
     } else {
-      // SVG <path> — used for the scrap branch (L-shaped)
       const len = node.getTotalLength();
-      connectorLength[id] = len;
+      connectorLength[id]  = len;
       connectorPointAt[id] = (t) => {
         const p = node.getPointAtLength(len * t);
         return { x: p.x, y: p.y };
@@ -95,44 +180,46 @@ function detectTransfers(prev, next) {
   if (!prev || !next) return [];
   const events = [];
 
-  const bufBy = (state, id) =>
-    state.buffers.find(b => b.id === id) ?? { totalPartsOut: 0, load: 0, capacity: 0 };
-  const machBy = (state, id) =>
-    state.machines.find(m => m.id === id) ?? { partsProcessed: 0 };
-  const sourceOf = (state) => state.source ?? { totalGenerated: 0 };
-  const scrapOf  = (state) => state.scrap  ?? { partsReceived: 0 };
-
-  // Source -> BUF0
-  const srcDelta = sourceOf(next).totalGenerated - sourceOf(prev).totalGenerated;
+  // Source → source-fed buffer
+  const srcDelta = (next.source?.totalGenerated ?? 0) - (prev.source?.totalGenerated ?? 0);
   if (srcDelta > 0) events.push({ connectorId: 'conn-src-b0', kind: 'good', count: srcDelta });
 
-  // Buffer pulls (cumulative totalPartsOut)
-  const bufPulls = [
-    ['BUF0', 'conn-b0-m1'],
-    ['BUF1', 'conn-b1-m2'],
-    ['BUF2', 'conn-b2-m3'],
-    ['BUF3', 'conn-b3-m4'],
-  ];
-  for (const [bufId, connId] of bufPulls) {
-    const d = bufBy(next, bufId).totalPartsOut - bufBy(prev, bufId).totalPartsOut;
-    if (d > 0) events.push({ connectorId: connId, kind: 'good', count: d });
+  const prevMach = {};
+  for (const m of prev.machines) prevMach[m.id] = m;
+
+  // Scrap is a single global counter; split this frame's scrap across the
+  // rejecting machines proportionally to how many parts each processed.
+  const scrapDelta = (next.scrap?.partsReceived ?? 0) - (prev.scrap?.partsReceived ?? 0);
+  const rejectDeltas = {};
+  let sumReject = 0;
+  for (const m of next.machines) {
+    if (m.rejectRate > 0) {
+      const d = Math.max(0, m.partsProcessed - (prevMach[m.id]?.partsProcessed ?? 0));
+      rejectDeltas[m.id] = d;
+      sumReject += d;
+    }
   }
 
-  // Machine outputs
-  const m1d = machBy(next, 'M1').partsProcessed - machBy(prev, 'M1').partsProcessed;
-  if (m1d > 0) events.push({ connectorId: 'conn-m1-b1', kind: 'good', count: m1d });
+  for (const m of next.machines) {
+    const pm = prevMach[m.id];
 
-  const m2d  = machBy(next, 'M2').partsProcessed - machBy(prev, 'M2').partsProcessed;
-  const m2sd = scrapOf(next).partsReceived - scrapOf(prev).partsReceived;
-  if (m2sd > 0)            events.push({ connectorId: 'conn-m2-scrap', kind: 'scrap', count: m2sd });
-  const m2good = Math.max(0, m2d - m2sd);
-  if (m2good > 0)          events.push({ connectorId: 'conn-m2-b2', kind: 'good', count: m2good });
+    // Pull animation: a new part entered this machine (currentPartId changed).
+    if (m.currentPartId != null && pm && pm.currentPartId !== m.currentPartId) {
+      events.push({ connectorId: `conn-in-${m.id}`, kind: 'good', count: 1 });
+    }
 
-  const m3d = machBy(next, 'M3').partsProcessed - machBy(prev, 'M3').partsProcessed;
-  if (m3d > 0) events.push({ connectorId: 'conn-m3-b3', kind: 'good', count: m3d });
+    const dProcessed = m.partsProcessed - (pm?.partsProcessed ?? 0);
+    if (dProcessed <= 0) continue;
 
-  const m4d = machBy(next, 'M4').partsProcessed - machBy(prev, 'M4').partsProcessed;
-  if (m4d > 0) events.push({ connectorId: 'conn-m4-sink', kind: 'good', count: m4d });
+    if (m.rejectRate > 0) {
+      const myScrap = sumReject > 0 ? Math.round(scrapDelta * (rejectDeltas[m.id] / sumReject)) : 0;
+      const myGood  = Math.max(0, dProcessed - myScrap);
+      if (myScrap > 0) events.push({ connectorId: `conn-scrap-${m.id}`, kind: 'scrap', count: myScrap });
+      if (myGood  > 0) events.push({ connectorId: `conn-out-${m.id}`,   kind: 'good',  count: myGood });
+    } else {
+      events.push({ connectorId: `conn-out-${m.id}`, kind: 'good', count: dProcessed });
+    }
+  }
 
   return events;
 }
@@ -174,141 +261,87 @@ function txt(content, attrs = {}) {
 // ── Initial SVG draw (static skeleton) ───────────────────────────────────────
 // We draw the structure once; dynamic parts get IDs and are updated every frame.
 
-function buildPipeline() {
-  svg.innerHTML = '';   // clear on reset
+function buildPipeline(state) {
+  svg.innerHTML = '';   // clear on reset / structure change
 
-  // ── Connector lines ────────────────────────────────────────────────────────
+  layout = computeLayout(state);
+  const vb = layout.viewBox;
+  svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
 
-  const connectors = [
-    // id,         x1,                          y1,      x2,                    y2
-    ['conn-src-b0', LAYOUT.SOURCE + SRC_W,      MAIN_Y,  LAYOUT.BUF0,           MAIN_Y],
-    ['conn-b0-m1',  LAYOUT.BUF0  + BUF_W,      MAIN_Y,  LAYOUT.M1,             MAIN_Y],
-    ['conn-m1-b1',  LAYOUT.M1    + MACH_W,     MAIN_Y,  LAYOUT.BUF1,           MAIN_Y],
-    ['conn-b1-m2',  LAYOUT.BUF1  + BUF_W,      MAIN_Y,  LAYOUT.M2,             MAIN_Y],
-    ['conn-m2-b2',  LAYOUT.M2    + MACH_W,     MAIN_Y,  LAYOUT.BUF2,           MAIN_Y],
-    ['conn-b2-m3',  LAYOUT.BUF2  + BUF_W,      MAIN_Y,  LAYOUT.M3,             MAIN_Y],
-    ['conn-m3-b3',  LAYOUT.M3    + MACH_W,     MAIN_Y,  LAYOUT.BUF3,           MAIN_Y],
-    ['conn-b3-m4',  LAYOUT.BUF3  + BUF_W,      MAIN_Y,  LAYOUT.M4,             MAIN_Y],
-    ['conn-m4-sink',LAYOUT.M4    + MACH_W,     MAIN_Y,  LAYOUT.SINK,           MAIN_Y],
-  ];
-
-  for (const [id, x1, y1, x2, y2] of connectors) {
-    const line = el('line', { id, x1, y1, x2, y2, class: 'pipe-connector' });
-    svg.appendChild(line);
+  // ── Connectors ─────────────────────────────────────────────────────────────
+  for (const c of layout.connectors) {
+    const node = c.isPath
+      ? el('path', { id: c.id, d: c.d, class: 'pipe-connector' })
+      : el('line', { id: c.id, x1: c.x1, y1: c.y1, x2: c.x2, y2: c.y2, class: 'pipe-connector' });
+    svg.appendChild(node);
   }
 
-  // Scrap branch: vertical drop from M2 centre down to SCRAP_Y, then horizontal to scrap box
-  const m2CentreX = LAYOUT.M2 + MACH_W / 2;
-  const m2Bottom  = MAIN_Y + MACH_H / 2;
-  const scrapPath = el('path', {
-    id: 'conn-m2-scrap',
-    d: `M ${m2CentreX} ${m2Bottom} L ${m2CentreX} ${SCRAP_Y} L ${LAYOUT.SCRAP + SINK_W} ${SCRAP_Y}`,
-    class: 'pipe-connector',
-  });
-  svg.appendChild(scrapPath);
-
-  // Scrap label on the branch
-  const scrapLabel = txt('reject', { x: m2CentreX + 4, y: SCRAP_Y - 6, fill: '#ef4444', 'font-size': '10' });
-  svg.appendChild(scrapLabel);
-
-  const scrapRateLabel = txt('10%', { id: 'scrap-rate-label', x: m2CentreX + 4, y: SCRAP_Y + 14, fill: '#f87171', 'font-size': '10' });
-  svg.appendChild(scrapRateLabel);
-
-  // ── Particle overlay (sits above connectors, below stations) ─────────────
+  // ── Particle overlay (above connectors, below stations) ─────────────────────
   const defs = el('defs');
-  const glow = el('filter', {
-    id: 'part-glow',
-    x: '-50%', y: '-50%', width: '200%', height: '200%',
-  });
+  const glow = el('filter', { id: 'part-glow', x: '-50%', y: '-50%', width: '200%', height: '200%' });
   glow.appendChild(el('feGaussianBlur', { stdDeviation: '2.2' }));
   defs.appendChild(glow);
   svg.appendChild(defs);
 
-  const particleLayer = el('g', {
-    id: 'particle-layer',
-    filter: 'url(#part-glow)',
-  });
+  const particleLayer = el('g', { id: 'particle-layer', filter: 'url(#part-glow)' });
   svg.appendChild(particleLayer);
 
   cacheConnectorGeometry();
 
-  particlePool = [];   // particle <circle>s lived inside #particle-layer
+  particlePool = [];
   particles    = [];
   ensureParticleNodes(32);
   startParticleLoop();
 
-  // ── Source ─────────────────────────────────────────────────────────────────
-  drawSource();
-
-  // ── Buffers ────────────────────────────────────────────────────────────────
-  drawBuffer('BUF0', LAYOUT.BUF0, MAIN_Y - BUF_H / 2, 4);
-  drawBuffer('BUF1', LAYOUT.BUF1, MAIN_Y - BUF_H / 2, 3);
-  drawBuffer('BUF2', LAYOUT.BUF2, MAIN_Y - BUF_H / 2, 3);
-  drawBuffer('BUF3', LAYOUT.BUF3, MAIN_Y - BUF_H / 2, 2);
-
-  // ── Machines ───────────────────────────────────────────────────────────────
-  drawMachine('M1', LAYOUT.M1, MAIN_Y - MACH_H / 2, 'Rohbearbeitung',   4);
-  drawMachine('M2', LAYOUT.M2, MAIN_Y - MACH_H / 2, 'Qualitätsprüfung', 3);
-  drawMachine('M3', LAYOUT.M3, MAIN_Y - MACH_H / 2, 'Montage',          5);
-  drawMachine('M4', LAYOUT.M4, MAIN_Y - MACH_H / 2, 'Verpackung',       2);
-
-  // ── Sink ───────────────────────────────────────────────────────────────────
-  drawSink(LAYOUT.SINK, MAIN_Y - SINK_H / 2);
-
-  // ── Scrap sink ─────────────────────────────────────────────────────────────
-  drawScrapSink(LAYOUT.SCRAP, SCRAP_Y - SINK_H / 2);
+  // ── Stations / buffers / endpoints ──────────────────────────────────────────
+  drawSource(layout.pos.source);
+  for (const b of state.buffers) drawBuffer(b, layout.pos.buffers[b.id]);
+  for (const m of state.machines) drawMachine(m, layout.pos.machines[m.id]);
+  drawSink(layout.pos.sink);
+  drawScrapSink(layout.pos.scrap);
 }
 
 // ─── Draw helpers ─────────────────────────────────────────────────────────────
 
-function drawSource() {
-  const x = LAYOUT.SOURCE;
+function drawSource(p) {
+  const x = p.x;
   const y = MAIN_Y - SRC_H / 2;
   const g = el('g', { id: 'elem-SOURCE' });
 
   g.appendChild(el('rect', { x, y, width: SRC_W, height: SRC_H, rx: 6,
     fill: '#1a1d27', stroke: '#4f46e5', 'stroke-width': 1.5 }));
-
-  // Stock bar background
   g.appendChild(el('rect', { id: 'src-stock-bg', x: x + 8, y: y + SRC_H - 20, width: SRC_W - 16, height: 10,
     rx: 3, fill: '#252836' }));
-  // Stock bar fill (width updated dynamically)
   g.appendChild(el('rect', { id: 'src-stock-fill', x: x + 8, y: y + SRC_H - 20, width: SRC_W - 16, height: 10,
     rx: 3, fill: '#6366f1' }));
-
   g.appendChild(txt('SOURCE', { x: x + SRC_W / 2, y: y + 18, 'text-anchor': 'middle', 'font-size': '10', fill: '#818cf8' }));
   g.appendChild(txt('', { id: 'src-stock-text', x: x + SRC_W / 2, y: y + 38, 'text-anchor': 'middle', 'font-size': '11' }));
 
   svg.appendChild(g);
 }
 
-function drawBuffer(id, x, y, defaultCap) {
+function drawBuffer(buf, p) {
+  const id = buf.id, x = p.x, y = p.y;
   const g = el('g', { id: `elem-${id}` });
 
   g.appendChild(el('rect', { x, y, width: BUF_W, height: BUF_H, rx: 5,
     fill: '#1a1d27', stroke: '#2e3347', 'stroke-width': 1.2 }));
-
   g.appendChild(txt(id, { x: x + BUF_W / 2, y: y + 13, 'text-anchor': 'middle', 'font-size': '9', fill: '#64748b' }));
-
-  // Load / capacity text
-  g.appendChild(txt('0/4', { id: `buf-load-${id}`, x: x + BUF_W / 2, y: y + BUF_H - 5, 'text-anchor': 'middle', 'font-size': '10' }));
-
-  // Slots — rendered as a row of small squares
-  const slotGroup = el('g', { id: `buf-slots-${id}` });
-  g.appendChild(slotGroup);
+  g.appendChild(txt('0/0', { id: `buf-load-${id}`, x: x + BUF_W / 2, y: y + BUF_H - 5, 'text-anchor': 'middle', 'font-size': '10' }));
+  g.appendChild(el('g', { id: `buf-slots-${id}` }));
 
   svg.appendChild(g);
 }
 
-function drawMachine(id, x, y, name, cycleTime) {
+function drawMachine(m, p) {
+  const id = m.id, name = m.name;
+  const x = p.x, y = p.y;
   const g = el('g', { id: `elem-${id}` });
   g.addEventListener('click', () => openMachineDetail(id));
 
-  // Background rect
   g.appendChild(el('rect', { id: `mach-rect-${id}`, x, y, width: MACH_W, height: MACH_H,
     rx: 8, class: 'machine-rect IDLE', fill: '#1a1d27', stroke: '#2e3347', 'stroke-width': 1.5 }));
 
-  // Machine name (top)
   const shortName = name.length > 17 ? name.slice(0, 16) + '…' : name;
   g.appendChild(txt(shortName, { x: x + MACH_W / 2, y: y + 11, 'text-anchor': 'middle',
     'font-size': '9.5', fill: '#94a3b8' }));
@@ -373,7 +406,8 @@ function drawMachine(id, x, y, name, cycleTime) {
   svg.appendChild(g);
 }
 
-function drawSink(x, y) {
+function drawSink(p) {
+  const x = p.x, y = MAIN_Y - SINK_H / 2;
   const g = el('g', { id: 'elem-SINK' });
   g.appendChild(el('rect', { x, y, width: SINK_W, height: SINK_H, rx: 6,
     fill: '#1a1d27', stroke: '#22c55e', 'stroke-width': 1.5 }));
@@ -384,7 +418,8 @@ function drawSink(x, y) {
   svg.appendChild(g);
 }
 
-function drawScrapSink(x, y) {
+function drawScrapSink(p) {
+  const x = p.x, y = p.y;
   const g = el('g', { id: 'elem-SCRAP' });
   g.appendChild(el('rect', { x, y, width: SINK_W, height: SINK_H, rx: 6,
     fill: '#1a1d27', stroke: '#ef4444', 'stroke-width': 1.5 }));
@@ -392,6 +427,7 @@ function drawScrapSink(x, y) {
   g.appendChild(txt('0', { id: 'scrap-count', x: x + SINK_W / 2, y: y + 40, 'text-anchor': 'middle',
     'font-size': '20', fill: '#ef4444', 'font-weight': 'bold' }));
   g.appendChild(txt('scrapped', { x: x + SINK_W / 2, y: y + SINK_H - 6, 'text-anchor': 'middle', 'font-size': '9', fill: '#fca5a5' }));
+  g.appendChild(txt('', { id: 'scrap-rate-label', x: x + SINK_W / 2, y: y - 6, 'text-anchor': 'middle', 'font-size': '10', fill: '#f87171' }));
   svg.appendChild(g);
 }
 
@@ -431,35 +467,32 @@ function updatePipeline(state, metrics) {
     updateMachine(m, metricsMap[m.id]);
   }
 
-  // ── Connector colours (blocked = red) ──────────────────────────────────────
-  // A connector is "blocked" if the buffer at its destination is full
+  // ── Connector colours (blocked = destination buffer full) ──────────────────
   const bufMap = {};
   for (const b of state.buffers) bufMap[b.id] = b;
-
-  setConnectorBlocked('conn-src-b0', bufMap.BUF0?.load >= bufMap.BUF0?.capacity);
-  setConnectorBlocked('conn-b0-m1',  false);
-  setConnectorBlocked('conn-m1-b1',  bufMap.BUF1?.load >= bufMap.BUF1?.capacity);
-  setConnectorBlocked('conn-b1-m2',  false);
-  setConnectorBlocked('conn-m2-b2',  bufMap.BUF2?.load >= bufMap.BUF2?.capacity);
-  setConnectorBlocked('conn-b2-m3',  false);
-  setConnectorBlocked('conn-m3-b3',  bufMap.BUF3?.load >= bufMap.BUF3?.capacity);
-  setConnectorBlocked('conn-b3-m4',  false);
+  for (const c of layout.connectors) {
+    if (!c.destBufferId) continue;
+    const buf = bufMap[c.destBufferId];
+    setConnectorBlocked(c.id, !!buf && buf.load >= buf.capacity);
+  }
 
   // ── Sink / Scrap counts ────────────────────────────────────────────────────
   setTextContent('sink-count',  state.sink.partsReceived);
   setTextContent('scrap-count', state.scrap.partsReceived);
 
-  // Update scrap rate label (M2 rejectRate)
-  const m2 = state.machines.find(m => m.id === 'M2');
-  if (m2) {
-    setTextContent('scrap-rate-label', (m2.rejectRate * 100).toFixed(0) + '%');
-  }
+  // Per-machine reject rates are shown in each machine's detail panel; the
+  // shared scrap sink no longer carries a single rate label.
+  setTextContent('scrap-rate-label', '');
 
   // ── Machine detail panel (if open) ─────────────────────────────────────────
   updateMachineDetail();
 
   // ── Header tick ────────────────────────────────────────────────────────────
   setTextContent('tick-counter', state.tick);
+  // Simulated elapsed time in seconds = ticks / ticksPerSecond (independent of the
+  // wall-clock speed multiplier). Falls back to 10 tps if the field is absent.
+  const tps = state.ticksPerSecond || 10;
+  setTextContent('time-counter', (state.tick / tps).toFixed(1));
   const dot   = document.getElementById('status-dot');
   const label = document.getElementById('status-label');
   if (dot && label) {
@@ -471,6 +504,10 @@ function updatePipeline(state, metrics) {
       label.textContent = 'Paused';
     }
   }
+
+  // ── Start banner (shown only before the run has begun) ──────────────────────
+  const startBanner = document.getElementById('start-banner');
+  if (startBanner) startBanner.hidden = !shouldShowStartBanner(state);
 }
 
 function updateBufferSlots(buf) {
@@ -483,8 +520,10 @@ function updateBufferSlots(buf) {
   // Rebuild slots (capacity might have changed via slider)
   slotGroup.innerHTML = '';
   const cap   = buf.capacity;
-  const elemX = LAYOUT[buf.id];
-  const elemY = MAIN_Y - BUF_H / 2;
+  const bp    = layout?.pos.buffers[buf.id];
+  if (!bp) return;
+  const elemX = bp.x;
+  const elemY = bp.y;
 
   // Determine slot sizing to fit within buffer box
   const slotSize = Math.min(14, (BUF_W - 10) / cap - 3);
@@ -566,6 +605,19 @@ function openMachineDetail(id) {
   selectedMachineId = id;
   const panel = document.getElementById('machine-detail');
   if (panel) panel.hidden = false;
+
+  // Wire the reject-rate slider once; it always targets the selected machine.
+  const rejectSlider = document.getElementById('md-reject-slider');
+  if (rejectSlider && !rejectSlider.dataset.wired) {
+    rejectSlider.dataset.wired = '1';
+    rejectSlider.addEventListener('input', e => {
+      const v = parseInt(e.target.value, 10);
+      const valEl = document.getElementById('md-reject-val');
+      if (valEl) valEl.textContent = v + '%';
+      if (selectedMachineId) postControl({ machineId: selectedMachineId, rejectRate: v / 100 });
+    });
+  }
+
   // Push an immediate render so the panel populates before the next SSE frame
   updateMachineDetail();
   if (lastState) {
@@ -595,6 +647,12 @@ function updateMachineDetail() {
 
   const m = lastState.machines.find(x => x.id === selectedMachineId);
   if (!m) return;
+  const removeBtn = document.getElementById('md-remove');
+  if (removeBtn) {
+    const stationMachines = lastState.machines.filter(x => x.stationId === m.stationId);
+    // The original (first-listed) station machine cannot be removed.
+    removeBtn.disabled = stationMachines.length <= 1 || stationMachines[0].id === m.id;
+  }
   const mm = lastMetrics?.machines?.find(x => x.id === selectedMachineId);
 
   setTextContent('md-id',   m.id);
@@ -628,15 +686,13 @@ function updateMachineDetail() {
   setTextContent('md-processed', m.partsProcessed);
   setTextContent('md-wait',      (mm?.avgQueueWait ?? 0).toFixed(1) + ' ticks');
 
-  // Reject rate only meaningful for the quality gate (M2 or any non-zero)
-  const rejectStat = document.getElementById('md-reject-stat');
-  if (rejectStat) {
-    if (m.rejectRate && m.rejectRate > 0) {
-      rejectStat.hidden = false;
-      setTextContent('md-reject', (m.rejectRate * 100).toFixed(0) + '%');
-    } else {
-      rejectStat.hidden = true;
-    }
+  // Quality gate: editable reject-rate slider, shown for every machine.
+  const rejectSlider = document.getElementById('md-reject-slider');
+  const rejectValEl  = document.getElementById('md-reject-val');
+  const pct = Math.round((m.rejectRate ?? 0) * 100);
+  if (rejectValEl) rejectValEl.textContent = pct + '%';
+  if (rejectSlider && document.activeElement !== rejectSlider) {
+    rejectSlider.value = pct;
   }
 
   // Time breakdown stacked bar
@@ -683,6 +739,13 @@ function updateMetricsDashboard(metrics, state) {
   setTextContent('m-in-system',   metrics.partsInSystem);
   setTextContent('m-scrapped',    metrics.scrappedParts);
 
+  const lt = metrics.leadTimeStats;
+  if (lt) {
+    setTextContent('m-leadtime-spread', `p50 ${lt.p50} · p95 ${lt.p95} · σ ${lt.stdDev}`);
+  }
+  // Flow efficiency as a percentage (value-added ratio).
+  setTextContent('m-flow-efficiency', `${(metrics.flowEfficiency * 100).toFixed(0)}%`);
+
   // Sparkline data — only advance while running so the chart freezes on pause
   if (state && state.running) {
     sparklineData.push(metrics.throughput);
@@ -695,12 +758,13 @@ function updateMetricsDashboard(metrics, state) {
   if (!tbody || !metrics.machines) return;
   tbody.innerHTML = '';
 
-  for (const m of metrics.machines) {
+  for (const m of orderedMachines(metrics.machines)) {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><strong>${m.id}</strong> — ${m.name}${m.bottleneck ? '<span class="bottleneck-badge">Engpass</span>' : ''}</td>
       <td><span class="state-badge state-${m.currentState}">${m.currentState}</span> <span class="state-desc">${STATE_DESCRIPTION[m.currentState] ?? ''}</span></td>
       <td>${(m.utilization * 100).toFixed(1)}%</td>
+      <td>${m.throughput.toFixed(1)}</td>
       <td>${m.avgQueueWait.toFixed(1)} ticks</td>
       <td>${m.blockedTime} ticks</td>
       <td>${m.starvedTime} ticks</td>
@@ -795,12 +859,11 @@ function releaseParticleNode(slot) {
 }
 
 function isDestBufferFull(connectorId) {
-  if (!particleSimState) return false;
-  const conn = CONNECTORS.find(c => c.id === connectorId);
+  if (!particleSimState || !layout) return false;
+  const conn = layout.connectors.find(c => c.id === connectorId);
   if (!conn || !conn.destBufferId) return false;
   const buf = particleSimState.buffers.find(b => b.id === conn.destBufferId);
-  if (!buf) return false;
-  return buf.load >= buf.capacity;
+  return buf ? buf.load >= buf.capacity : false;
 }
 
 function spawnParticle({ connectorId, kind, delayMs = 0 }) {
@@ -909,6 +972,74 @@ function resetParticles() {
   particles = [];
 }
 
+// ── Spawn suggestion banner ─────────────────────────────────────────────────
+
+// Escape a generated string for safe interpolation into an HTML attribute value.
+function escapeAttr(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+let lastSuggestionSig = null;
+
+function updateSuggestionBanner(metrics) {
+  const banner = document.getElementById('suggestion-banner');
+  if (!banner) return;
+  const suggestions = metrics?.suggestions ?? [];
+
+  // Skip the rebuild when the set of suggestions is structurally unchanged, so
+  // the spawn button isn't destroyed and recreated every SSE frame (which would
+  // eat clicks that land mid-rebuild). Live numbers in the tooltip refresh on
+  // the next structural change.
+  const sig = suggestionSignature(suggestions);
+  if (sig === lastSuggestionSig) return;
+  lastSuggestionSig = sig;
+
+  if (suggestions.length === 0) {
+    banner.hidden = true;
+    banner.innerHTML = '';
+    return;
+  }
+  banner.hidden = false;
+  banner.innerHTML = suggestions.map((s, i) => {
+    if (s.type === 'no-internal-constraint') {
+      return `<div class="sg-row sg-note">` +
+        `<span class="sg-text">ℹ ${s.reason}</span>` +
+      `</div>`;
+    }
+    return `<div class="sg-row">` +
+      `<span class="sg-text">⚠ ${s.label} <span class="info-icon" data-tip="${escapeAttr(s.reason)}">i</span></span>` +
+      `<button class="sg-btn" data-station="${s.stationId}" data-idx="${i}" type="button">+ Parallele Maschine hinzufügen</button>` +
+    `</div>`;
+  }).join('');
+  banner.querySelectorAll('.sg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      postControl({ stationId: btn.dataset.station }, 'spawnMachine');
+    });
+  });
+}
+
+// Group machines by station in pipeline (first-appearance) order, sorted within
+// a station by id, so parallel machines (M3, M3b, M3c) stay together instead of
+// appearing in raw config order (where spawns are appended after later stations).
+// Assumes the original station machines appear in pipeline order in the array
+// (true for the current linear config); for a non-linear line, derive order from
+// the buffer chain instead (see engine.js _assignStationOrder).
+function orderedMachines(machines) {
+  const stationFirstIndex = new Map();
+  machines.forEach((m, i) => {
+    if (!stationFirstIndex.has(m.stationId)) stationFirstIndex.set(m.stationId, i);
+  });
+  return [...machines].sort((a, b) => {
+    const sa = stationFirstIndex.get(a.stationId);
+    const sb = stationFirstIndex.get(b.stationId);
+    return sa !== sb ? sa - sb : a.id.localeCompare(b.id);
+  });
+}
+
 // ── Control panel ─────────────────────────────────────────────────────────────
 
 function buildControlSliders(state) {
@@ -919,7 +1050,7 @@ function buildControlSliders(state) {
     if (!c.classList.contains('section-label')) c.remove();
   });
 
-  for (const m of state.machines) {
+  for (const m of orderedMachines(state.machines)) {
     const div = document.createElement('div');
     div.className = 'slider-group';
     div.innerHTML = `
@@ -974,30 +1105,87 @@ async function postControl(params, action) {
 
 document.getElementById('btn-play').addEventListener('click', () => postControl({}, 'play'));
 document.getElementById('btn-pause').addEventListener('click', () => postControl({}, 'pause'));
+document.getElementById('btn-start')?.addEventListener('click', () => postControl({}, 'play'));
 
 async function applyReset(action) {
   await postControl({}, action);
   const newState = await fetch('/api/state').then(r => r.json());
   lastState = newState;
-  buildPipeline();
-  prevStateForDiff = newState;   // baseline; no spurious deltas next frame
+  buildPipeline(newState);
+  builtMachineKey = newState.machines.map(m => m.id).join(',');
+  prevStateForDiff = newState;
   resetParticles();
   buildControlSliders(newState);
-  // Sync static sliders to the post-reset state
   document.getElementById('src-interval').value = newState.source.interval;
   document.getElementById('val-src-interval').textContent = newState.source.interval;
   document.getElementById('material-stock').value = newState.source.materialStock;
   document.getElementById('val-material-stock').textContent = newState.source.materialStock;
-  const m2 = newState.machines.find(m => m.id === 'M2');
-  if (m2) {
-    const pct = Math.round(m2.rejectRate * 100);
-    document.getElementById('reject-rate').value = pct;
-    document.getElementById('val-reject-rate').textContent = pct + '%';
-  }
 }
+
 
 document.getElementById('btn-reset').addEventListener('click', () => applyReset('reset'));
 document.getElementById('btn-reset-defaults').addEventListener('click', () => applyReset('resetToDefaults'));
+
+// ── Scenario presets ────────────────────────────────────────────────────────
+
+// Transient confirmation message. Re-arming clearTimeout avoids a stale earlier
+// toast hiding a newer one.
+let toastTimer = null;
+function showToast(message) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = message;
+  el.hidden = false;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, 3000);
+}
+
+// Loading a preset swaps the whole machine/buffer set, so we reuse the reset
+// flow (rebuild pipeline + sliders from the fresh state) rather than just diffing.
+async function loadPreset(presetId, label) {
+  const res = await fetch('/api/control', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'loadPreset', params: { presetId } }),
+  }).then(r => r.json()).catch(() => ({ ok: false }));
+
+  if (!res.ok) { showToast('⚠ Preset konnte nicht geladen werden'); return; }
+
+  const newState = await fetch('/api/state').then(r => r.json()).catch(() => null);
+  if (!newState) { showToast('⚠ Preset geladen, aber Ansicht konnte nicht aktualisiert werden'); return; }
+  lastState = newState;
+  buildPipeline(newState);
+  builtMachineKey = newState.machines.map(m => m.id).join(',');
+  prevStateForDiff = newState;
+  resetParticles();
+  buildControlSliders(newState);
+  document.getElementById('src-interval').value = newState.source.interval;
+  document.getElementById('val-src-interval').textContent = newState.source.interval;
+  document.getElementById('material-stock').value = newState.source.materialStock;
+  document.getElementById('val-material-stock').textContent = newState.source.materialStock;
+
+  showToast(`✓ Preset „${label}" geladen – jetzt starten`);
+}
+
+// Fetch preset metadata once and render a button per scenario.
+async function initPresetButtons() {
+  const row = document.getElementById('preset-row');
+  if (!row) return;
+  let presets = [];
+  try {
+    presets = await fetch('/api/presets').then(r => r.json());
+  } catch (_) { return; }
+  for (const p of presets) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = p.label;
+    btn.title = p.description;
+    btn.dataset.presetId = p.id;
+    btn.addEventListener('click', () => loadPreset(p.id, p.label));
+    row.appendChild(btn);
+  }
+}
+initPresetButtons();
 
 // Export per-tick history. The browser keeps our session cookie on the
 // navigation, so the server returns this session's recorded history.
@@ -1034,37 +1222,43 @@ document.getElementById('material-stock').addEventListener('input', e => {
   postControl({ materialStock: v });
 });
 
-document.getElementById('reject-rate').addEventListener('input', e => {
-  const v = parseInt(e.target.value, 10);
-  document.getElementById('val-reject-rate').textContent = v + '%';
-  postControl({ machineId: 'M2', rejectRate: v / 100 });
-});
 
 // ── SSE connection ────────────────────────────────────────────────────────────
 
 function connectSSE() {
   const es = new EventSource('/api/events');
-  let slidersBuilt = false;
 
   es.addEventListener('message', e => {
     const { state, metrics } = JSON.parse(e.data);
     lastState   = state;
     lastMetrics = metrics;
 
-    // Particle flow: detect transfers between consecutive state snapshots
+    // Rebuild the SVG whenever the set of machines changes (spawn/remove/reset).
+    const key = state.machines.map(m => m.id).join(',');
+    if (key !== builtMachineKey) {
+      buildPipeline(state);
+      buildControlSliders(state);
+      resetParticles();
+      prevStateForDiff = state;          // baseline; no spurious deltas this frame
+      builtMachineKey  = key;
+      // Close the detail panel if its machine no longer exists.
+      if (selectedMachineId && !state.machines.some(m => m.id === selectedMachineId)) {
+        closeMachineDetail();
+      }
+    }
+
+    // Particle flow: detect transfers between consecutive snapshots.
     const transfers = detectTransfers(prevStateForDiff, state);
     if (transfers.length > 0) spawnFromEvents(transfers);
-    prevStateForDiff = state;
-    particleSimState = state;
-    particleSimPaused = !state.running;
-
-    if (!slidersBuilt && state.machines) {
-      buildControlSliders(state);
-      slidersBuilt = true;
-    }
+    prevStateForDiff  = state;
+    particleSimState  = state;
+    // Freeze in-flight dots while paused for inspection, but NOT once the run has
+    // finished — let the final transfers glide out so no dots linger on the line.
+    particleSimPaused = shouldFreezeParticles(state);
 
     updatePipeline(state, metrics);
     updateMetricsDashboard(metrics, state);
+    updateSuggestionBanner(metrics);
   });
 
   es.addEventListener('error', () => {
@@ -1077,11 +1271,21 @@ function connectSSE() {
 // ── Machine detail panel: close handlers ─────────────────────────────────────
 
 document.getElementById('md-close')?.addEventListener('click', closeMachineDetail);
+document.getElementById('md-spawn')?.addEventListener('click', () => {
+  const m = lastState?.machines.find(x => x.id === selectedMachineId);
+  if (m) postControl({ stationId: m.stationId }, 'spawnMachine');
+});
+document.getElementById('md-remove')?.addEventListener('click', () => {
+  if (selectedMachineId) postControl({ machineId: selectedMachineId }, 'removeMachine');
+});
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && selectedMachineId) closeMachineDetail();
 });
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
+// The pipeline is built from the first SSE frame (and rebuilt whenever the set
+// of machines changes), since the layout is derived from state.
 
-buildPipeline();
+let builtMachineKey = null;   // machine-id signature of the currently-drawn layout
+
 connectSSE();
