@@ -14,8 +14,8 @@ RUN npm install --omit=dev
 # Copy the application source
 COPY src/ ./src/
 
-# Expose the HTTP port (matches PORT env var default in server.js)
-EXPOSE 3000
+# Expose the HTTP port (matches PORT env var default in server.js) and OPC UA port
+EXPOSE 3000 4840
 
 # Start the server
 CMD ["node", "src/server.js"]
