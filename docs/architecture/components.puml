@@ -1,0 +1,42 @@
+@startuml components
+title PlantSim — Node module dependencies
+
+package "src/" {
+  [server.js]            as Server
+  [controls.js]          as Controls
+
+  package "simulation/" {
+    [engine.js]          as Engine
+    [entities.js]        as Entities
+    [config.js]          as Config
+  }
+
+  package "metrics/" {
+    [collector.js]       as Collector
+    [prometheus.js]      as Prom
+  }
+
+  package "opcua/" {
+    [server.js (opcua)]  as OpcuaServer
+    [nodeset.js]         as Nodeset
+  }
+}
+
+package "tools/" {
+  [opcua-client-demo.js] as DemoClient
+  [generate-nodes-json]  as Gen
+}
+
+Server      --> Engine
+Server      --> OpcuaServer
+Server      --> Collector
+Server      --> Prom
+Server      --> Controls
+OpcuaServer --> Nodeset
+OpcuaServer --> Controls
+Nodeset     --> Entities  : enum
+Gen         --> Nodeset
+Engine      --> Entities
+Engine      --> Config
+DemoClient  ..> OpcuaServer : OPC UA :4840
+@enduml

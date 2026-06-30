@@ -26,6 +26,8 @@ import { SimulationEngine } from './simulation/engine.js';
 import { DEFAULT_CONFIG }   from './simulation/config.js';
 import { calculateMetrics } from './metrics/collector.js';
 import { updateMetrics, register } from './metrics/prometheus.js';
+import { startOpcuaServer } from './opcua/server.js';
+import * as controls from './controls.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT      = parseInt(process.env.PORT ?? '3000', 10);
@@ -61,6 +63,24 @@ function scheduleCleanup(sid) {
     sessions.delete(sid);
   }, SESSION_TTL_MS);
 }
+
+// ── Plant engine: a dedicated, process-wide engine exposed via OPC UA ─────
+// Browser sessions remain isolated (each gets its own engine above). The
+// plant engine is the canonical sim that UAExpert and the OPC UA demo
+// client see. See docs/superpowers/specs/2026-06-30-opcua-server-design.md §10.
+const plantEngine = new SimulationEngine(DEFAULT_CONFIG);
+plantEngine.play();
+
+const OPCUA_PORT = parseInt(process.env.OPCUA_PORT ?? '4840', 10);
+const opcuaServerPromise = startOpcuaServer({ engine: plantEngine, port: OPCUA_PORT })
+  .then(s => {
+    console.log(`OPC UA server listening on opc.tcp://0.0.0.0:${OPCUA_PORT}/UA/PlantSim`);
+    return s;
+  })
+  .catch(err => {
+    console.error('OPC UA server failed to start:', err);
+    process.exit(1);
+  });
 
 // ── Session cookie ────────────────────────────────────────────────────────
 
@@ -142,20 +162,31 @@ app.get('/api/state', async (req) => getSession(req.sid).engine.getState());
 app.get('/api/metrics', async (req) => calculateMetrics(getSession(req.sid).engine.getState()));
 
 // Control endpoint
-app.post('/api/control', async (req) => {
+app.post('/api/control', async (req, reply) => {
   const { engine } = getSession(req.sid);
   const { action, params = {} } = req.body ?? {};
 
   switch (action) {
-    case 'play':            engine.play();            break;
-    case 'pause':           engine.pause();           break;
-    case 'reset':           engine.reset();           break;
+    case 'play':            controls.play(engine);    break;
+    case 'pause':           controls.pause(engine);   break;
+    case 'reset':           controls.reset(engine);   break;
     case 'resetToDefaults': engine.resetToDefaults(); break;
     default:
       // No recognised action — may still have params to update
   }
 
-  if (Object.keys(params).length > 0) {
+  // Validate speed through controls.setSpeed before delegating to updateConfig,
+  // so HTTP and OPC UA reject identical inputs (e.g. zero/negative multipliers).
+  if (params.speed !== undefined) {
+    try {
+      controls.setSpeed(engine, params.speed);
+    } catch (err) {
+      reply.code(400);
+      return { ok: false, error: err.message };
+    }
+    const { speed: _omit, ...rest } = params;
+    if (Object.keys(rest).length > 0) engine.updateConfig(rest);
+  } else if (Object.keys(params).length > 0) {
     engine.updateConfig(params);
   }
 
@@ -220,3 +251,15 @@ try {
   console.error(err);
   process.exit(1);
 }
+
+async function shutdown(signal) {
+  console.log(`received ${signal}, shutting down`);
+  try { await app.close(); } catch (_) {}
+  try {
+    const opcua = await opcuaServerPromise;
+    await opcua.shutdown(1000);
+  } catch (_) { /* server may not have started */ }
+  process.exit(0);
+}
+process.on('SIGINT',  () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));

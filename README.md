@@ -33,6 +33,50 @@ docker compose -f docker-compose.yml -f docker-compose.grafana.yml up --build
 
 ---
 
+## OPC UA Server
+
+The simulation exposes an OPC UA server alongside the HTTP / SSE / Prometheus
+endpoints. The OPC UA server is backed by a **dedicated plant engine** — a
+separate `SimulationEngine` from the per-browser-session engines, so that
+UAExpert and the demo client always see the same canonical plant.
+
+| What         | Where                                         |
+|--------------|-----------------------------------------------|
+| Endpoint URL | `opc.tcp://localhost:4840/UA/PlantSim`        |
+| Namespace    | `urn:mci:plantsim` (`ns=1`)                   |
+| Security     | `SecurityPolicy.None`, anonymous (lab only)   |
+| Node tree    | `docs/opcua/nodes.json`                       |
+
+### Quick demo
+
+```bash
+# 1. Start the stack
+docker compose up --build
+
+# 2. (option A) Connect with UAExpert
+#    → Browse Objects → Line, drag Tick / M1.State / BUF1.Level into a Data Access view
+
+# 2. (option B) Run the included Node.js client
+node tools/opcua-client-demo.js
+```
+
+### Available methods on `Line.Methods`
+
+| Method         | Effect                                              |
+|----------------|-----------------------------------------------------|
+| `Play()`       | `engine.play()`                                     |
+| `Pause()`      | `engine.pause()`                                    |
+| `Reset()`      | `engine.reset()` (preserves user-tuned config)      |
+| `SetSpeed(x)`  | `engine.setSpeed(x)` — `x` must be a positive number |
+
+### Production hardening (out of scope here)
+
+For non-lab use, enable `Basic256Sha256` + certificate-based auth in
+`src/opcua/server.js` (`securityPolicies`, `securityModes`, `userManager`),
+and either bind the port to localhost only or terminate at a TLS reverse proxy.
+
+---
+
 ## Source File Guide
 
 | File | Role |

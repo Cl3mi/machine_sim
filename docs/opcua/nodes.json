@@ -1,0 +1,443 @@
+{
+  "browseName": "Line",
+  "kind": "object",
+  "children": [
+    {
+      "browseName": "Throughput",
+      "kind": "variable",
+      "dataType": "Double"
+    },
+    {
+      "browseName": "AvgLeadTime",
+      "kind": "variable",
+      "dataType": "Double"
+    },
+    {
+      "browseName": "Tick",
+      "kind": "variable",
+      "dataType": "UInt32"
+    },
+    {
+      "browseName": "State",
+      "kind": "variable",
+      "dataType": "String"
+    },
+    {
+      "browseName": "Speed",
+      "kind": "variable",
+      "dataType": "Double"
+    },
+    {
+      "browseName": "Source",
+      "kind": "object",
+      "children": [
+        {
+          "browseName": "TotalGenerated",
+          "kind": "variable",
+          "dataType": "UInt32"
+        },
+        {
+          "browseName": "MaterialStock",
+          "kind": "variable",
+          "dataType": "UInt32"
+        },
+        {
+          "browseName": "Interval",
+          "kind": "variable",
+          "dataType": "UInt32"
+        }
+      ]
+    },
+    {
+      "browseName": "Sink",
+      "kind": "object",
+      "children": [
+        {
+          "browseName": "PartsReceived",
+          "kind": "variable",
+          "dataType": "UInt32"
+        },
+        {
+          "browseName": "ScrapReceived",
+          "kind": "variable",
+          "dataType": "UInt32"
+        }
+      ]
+    },
+    {
+      "browseName": "Machines",
+      "kind": "folder",
+      "children": [
+        {
+          "browseName": "M1",
+          "kind": "object",
+          "children": [
+            {
+              "browseName": "Name",
+              "kind": "variable",
+              "dataType": "String"
+            },
+            {
+              "browseName": "CycleTime",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "State",
+              "kind": "variable",
+              "dataType": "String"
+            },
+            {
+              "browseName": "PartsProcessed",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "Utilization",
+              "kind": "variable",
+              "dataType": "Double"
+            },
+            {
+              "browseName": "TicksProcessing",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "TicksBlocked",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "TicksStarved",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "TicksIdle",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "RejectRate",
+              "kind": "variable",
+              "dataType": "Double"
+            }
+          ]
+        },
+        {
+          "browseName": "M2",
+          "kind": "object",
+          "children": [
+            {
+              "browseName": "Name",
+              "kind": "variable",
+              "dataType": "String"
+            },
+            {
+              "browseName": "CycleTime",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "State",
+              "kind": "variable",
+              "dataType": "String"
+            },
+            {
+              "browseName": "PartsProcessed",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "Utilization",
+              "kind": "variable",
+              "dataType": "Double"
+            },
+            {
+              "browseName": "TicksProcessing",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "TicksBlocked",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "TicksStarved",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "TicksIdle",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "RejectRate",
+              "kind": "variable",
+              "dataType": "Double"
+            }
+          ]
+        },
+        {
+          "browseName": "M3",
+          "kind": "object",
+          "children": [
+            {
+              "browseName": "Name",
+              "kind": "variable",
+              "dataType": "String"
+            },
+            {
+              "browseName": "CycleTime",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "State",
+              "kind": "variable",
+              "dataType": "String"
+            },
+            {
+              "browseName": "PartsProcessed",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "Utilization",
+              "kind": "variable",
+              "dataType": "Double"
+            },
+            {
+              "browseName": "TicksProcessing",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "TicksBlocked",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "TicksStarved",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "TicksIdle",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "RejectRate",
+              "kind": "variable",
+              "dataType": "Double"
+            }
+          ]
+        },
+        {
+          "browseName": "M4",
+          "kind": "object",
+          "children": [
+            {
+              "browseName": "Name",
+              "kind": "variable",
+              "dataType": "String"
+            },
+            {
+              "browseName": "CycleTime",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "State",
+              "kind": "variable",
+              "dataType": "String"
+            },
+            {
+              "browseName": "PartsProcessed",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "Utilization",
+              "kind": "variable",
+              "dataType": "Double"
+            },
+            {
+              "browseName": "TicksProcessing",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "TicksBlocked",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "TicksStarved",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "TicksIdle",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "RejectRate",
+              "kind": "variable",
+              "dataType": "Double"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "browseName": "Buffers",
+      "kind": "folder",
+      "children": [
+        {
+          "browseName": "BUF0",
+          "kind": "object",
+          "children": [
+            {
+              "browseName": "Capacity",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "Level",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "Fill",
+              "kind": "variable",
+              "dataType": "Double"
+            },
+            {
+              "browseName": "AvgWaitTicks",
+              "kind": "variable",
+              "dataType": "Double"
+            }
+          ]
+        },
+        {
+          "browseName": "BUF1",
+          "kind": "object",
+          "children": [
+            {
+              "browseName": "Capacity",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "Level",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "Fill",
+              "kind": "variable",
+              "dataType": "Double"
+            },
+            {
+              "browseName": "AvgWaitTicks",
+              "kind": "variable",
+              "dataType": "Double"
+            }
+          ]
+        },
+        {
+          "browseName": "BUF2",
+          "kind": "object",
+          "children": [
+            {
+              "browseName": "Capacity",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "Level",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "Fill",
+              "kind": "variable",
+              "dataType": "Double"
+            },
+            {
+              "browseName": "AvgWaitTicks",
+              "kind": "variable",
+              "dataType": "Double"
+            }
+          ]
+        },
+        {
+          "browseName": "BUF3",
+          "kind": "object",
+          "children": [
+            {
+              "browseName": "Capacity",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "Level",
+              "kind": "variable",
+              "dataType": "UInt32"
+            },
+            {
+              "browseName": "Fill",
+              "kind": "variable",
+              "dataType": "Double"
+            },
+            {
+              "browseName": "AvgWaitTicks",
+              "kind": "variable",
+              "dataType": "Double"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "browseName": "Methods",
+      "kind": "folder",
+      "children": [
+        {
+          "browseName": "Play",
+          "kind": "method",
+          "inputArgs": [],
+          "outputArgs": []
+        },
+        {
+          "browseName": "Pause",
+          "kind": "method",
+          "inputArgs": [],
+          "outputArgs": []
+        },
+        {
+          "browseName": "Reset",
+          "kind": "method",
+          "inputArgs": [],
+          "outputArgs": []
+        },
+        {
+          "browseName": "SetSpeed",
+          "kind": "method",
+          "inputArgs": [
+            {
+              "name": "multiplier",
+              "dataType": "Double"
+            }
+          ],
+          "outputArgs": []
+        }
+      ]
+    }
+  ]
+}
