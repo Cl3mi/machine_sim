@@ -127,3 +127,42 @@ test('Line.Methods.SetSpeed updates engine speed; rejects 0', async () => {
     }
   });
 });
+
+test('Line.Methods.Play starts the engine', async () => {
+  await withServer(async (engine) => {
+    assert.equal(engine.getState().running, false);
+    const { client, session } = await connectClient();
+    try {
+      const result = await session.call({
+        objectId: 'ns=1;s=Line.Methods',
+        methodId: 'ns=1;s=Line.Methods.Play',
+        inputArguments: [],
+      });
+      assert.equal(result.statusCode.value, StatusCodes.Good.value);
+      assert.equal(engine.getState().running, true);
+    } finally {
+      engine.pause();
+      await session.close();
+      await client.disconnect();
+    }
+  });
+});
+
+test('Line.Methods.Reset zeros engine tick', async () => {
+  await withServer(async (engine) => {
+    engine.tick = 99;
+    const { client, session } = await connectClient();
+    try {
+      const result = await session.call({
+        objectId: 'ns=1;s=Line.Methods',
+        methodId: 'ns=1;s=Line.Methods.Reset',
+        inputArguments: [],
+      });
+      assert.equal(result.statusCode.value, StatusCodes.Good.value);
+      assert.equal(engine.tick, 0);
+    } finally {
+      await session.close();
+      await client.disconnect();
+    }
+  });
+});
