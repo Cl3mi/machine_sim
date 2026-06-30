@@ -267,7 +267,35 @@ process exit.
 | Simulation incl. OPC UA server communication   | `src/opcua/server.js`, `src/opcua/nodeset.js`, `src/controls.js`, existing engine, `tools/opcua-client-demo.js` |
 | OPC UA node definitions                        | `docs/opcua/nodes.json` (generated, committed)                 |
 
-## 10. Out-of-scope follow-ups
+## 10. Engine ownership
+
+The existing `server.js` runs one `SimulationEngine` **per browser session**
+(keyed by an `sid` cookie) so multiple students can experiment in parallel
+without colliding. The OPC UA server does not fit that per-session model —
+a physical PLC has a single, canonical state, not one-per-observer.
+
+Resolution: the OPC UA server **owns its own dedicated `SimulationEngine`
+instance** (the "plant engine"), constructed and started at process startup
+and running for the lifetime of the process. Browser sessions remain
+isolated and unchanged. UAExpert and the demo client always see the same
+canonical plant.
+
+Implications:
+
+- `src/server.js` constructs the plant engine once at startup, passes it to
+  `opcua/server.js`, and keeps the existing per-session map for the
+  browser UI untouched.
+- `src/controls.js` operates on the plant engine. HTTP control routes that
+  today target the session engine remain on the session engine. A new
+  `POST /api/plant/control` route (or equivalent) is **not** required for
+  the deliverable — the OPC UA Methods cover the cross-cutting control
+  surface; if a CLI/test wants to drive the plant engine directly, the
+  controls module is importable.
+- Prometheus metrics continue to scrape the session engines (existing
+  behaviour). Exposing the plant engine via Prometheus too is an
+  out-of-scope follow-up.
+
+## 11. Out-of-scope follow-ups
 
 - Migrating to the OPC 40001 Machinery companion spec for an
   umati-compatible namespace.
