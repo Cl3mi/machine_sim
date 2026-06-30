@@ -105,6 +105,12 @@ export async function startOpcuaServer({ engine, port = 4840 }) {
 
   const addressSpace = server.engine.addressSpace;
   const ns = addressSpace.getNamespace(NAMESPACE_URI);
+  if (!ns) {
+    throw new Error(
+      `Namespace ${NAMESPACE_URI} not registered. ` +
+      `Check that serverInfo.applicationUri is set to the same URI before calling initialize().`
+    );
+  }
 
   const tree = buildNodeset(engine);
   installNode(ns, addressSpace.rootFolder.objects, tree, []);
