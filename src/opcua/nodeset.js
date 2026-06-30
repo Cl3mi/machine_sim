@@ -12,8 +12,6 @@
  * controls.js wrappers (this file does not import controls).
  */
 
-import { MachineState } from '../simulation/entities.js';
-
 const sum = (arr) => arr.reduce((a, b) => a + b, 0);
 
 function machineUtilization(m) {
