@@ -27,6 +27,7 @@ import { DEFAULT_CONFIG }   from './simulation/config.js';
 import { calculateMetrics } from './metrics/collector.js';
 import { updateMetrics, register } from './metrics/prometheus.js';
 import { startOpcuaServer } from './opcua/server.js';
+import * as controls from './controls.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT      = parseInt(process.env.PORT ?? '3000', 10);
@@ -161,20 +162,31 @@ app.get('/api/state', async (req) => getSession(req.sid).engine.getState());
 app.get('/api/metrics', async (req) => calculateMetrics(getSession(req.sid).engine.getState()));
 
 // Control endpoint
-app.post('/api/control', async (req) => {
+app.post('/api/control', async (req, reply) => {
   const { engine } = getSession(req.sid);
   const { action, params = {} } = req.body ?? {};
 
   switch (action) {
-    case 'play':            engine.play();            break;
-    case 'pause':           engine.pause();           break;
-    case 'reset':           engine.reset();           break;
+    case 'play':            controls.play(engine);    break;
+    case 'pause':           controls.pause(engine);   break;
+    case 'reset':           controls.reset(engine);   break;
     case 'resetToDefaults': engine.resetToDefaults(); break;
     default:
       // No recognised action — may still have params to update
   }
 
-  if (Object.keys(params).length > 0) {
+  // Validate speed through controls.setSpeed before delegating to updateConfig,
+  // so HTTP and OPC UA reject identical inputs (e.g. zero/negative multipliers).
+  if (params.speed !== undefined) {
+    try {
+      controls.setSpeed(engine, params.speed);
+    } catch (err) {
+      reply.code(400);
+      return { ok: false, error: err.message };
+    }
+    const { speed: _omit, ...rest } = params;
+    if (Object.keys(rest).length > 0) engine.updateConfig(rest);
+  } else if (Object.keys(params).length > 0) {
     engine.updateConfig(params);
   }
 
