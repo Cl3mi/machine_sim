@@ -70,16 +70,36 @@ und genau hier trennt sich QoS 0 von QoS 1/2.
 | Level | Subscriber-Session | Demo-Szenario | Sichtbarer Effekt |
 |---|---|---|---|
 | QoS 0 | persistent (`clean:false`) | Subscriber stoppen → Publisher sendet → Subscriber neu starten | Offline-Nachrichten werden **verworfen** → Summary zeigt fehlende `seq` |
-| QoS 1 | persistent | gleiches Szenario + `manualAcks`-Trick (PUBACK unterdrücken / Crash vor Ack) | Nachrichten werden **nachgeliefert**, dabei **Duplikate** mit `dup`-Flag → Summary zählt sie |
-| QoS 2 | persistent | gleiches Szenario | Nachrichten werden **nachgeliefert, exactly-once** → keine Lücke, kein Duplikat |
+| QoS 1 | persistent | gleiches Szenario + `--kill-before-ack`-Modus (Socket-Abbruch vor PUBACK) | Nachrichten werden **nachgeliefert**, dabei **Duplikate** mit `dup`-Flag → Summary zählt sie |
+| QoS 2 | persistent | gleiches Szenario, auch mit Socket-Abbruch mitten im Handshake | Nachrichten werden **nachgeliefert, exactly-once** → keine Lücke, kein Duplikat |
 
-### QoS-1-Duplikat-Trick
+### QoS-1-Duplikat-Trick (empirisch verifiziert gegen Mosquitto 2.x + mqtt.js 5.x)
 
-Zuverlässiges Erzwingen eines Duplikats: Subscriber im `{ manualAcks: true }`-Modus
-empfängt eine Nachricht, sendet aber absichtlich **kein** `PUBACK` (bzw. Prozess
-wird vor dem Ack beendet). Beim Reconnect liefert der Broker dieselbe Nachricht mit
-`dup = 1` erneut aus → Duplikat sichtbar und in der Summary gezählt. Wird im README
-als optionaler Schritt dokumentiert.
+`manualAcks` existiert in mqtt.js 5.x **nicht mehr**. Zuverlässiges Erzwingen eines
+Duplikats stattdessen: der Subscriber empfängt eine QoS-1-Nachricht und ruft im
+`message`-Handler sofort `client.stream.destroy()` auf — das killt die TCP-Verbindung,
+**bevor** das automatische `PUBACK` rausgeht. Beim Reconnect (persistent session)
+liefert der Broker dieselbe Nachricht mit `dup = true` erneut → Duplikat sichtbar und
+in der Summary gezählt. Aktivierbar per Flag (z.B. `--kill-before-ack`), damit der
+Subscriber sonst normal läuft.
+
+Für QoS 2 ist derselbe Socket-Abbruch verifiziert **ohne** Doppel-Zustellung an die
+Anwendung (mqtt.js dedupliziert über `incomingStore` per Message-ID) → belegt
+exactly-once.
+
+### Verifizierte Implementierungs-Fakten
+
+- **Persistent session:** `mqtt.connect(URL, { clientId: <fest>, clean: false })`;
+  Reconnect meldet `connack.sessionPresent === true`. Broker puffert QoS-1/2-Nachrichten,
+  die während der Offline-Phase publiziert wurden.
+- **QoS 0 wird NICHT gepuffert** (auch bei persistent session verworfen).
+- **Message-Handler VOR dem Connect anhängen** (`mqtt.connect(...)` dann sofort
+  `client.on('message', …)`, NICHT `await connectAsync` und danach registrieren) —
+  sonst gehen die direkt nach CONNACK ausgelieferten, gepufferten Nachrichten verloren.
+- **Handshake-Logging:** `client.on('packetsend'|'packetreceive', pkt => …)`,
+  `pkt.cmd` ∈ `{ publish, puback, pubrec, pubrel, pubcomp }`. Verifizierte Folgen:
+  QoS0 = `publish`; QoS1 = `publish, puback`; QoS2 = `publish, pubrec, pubrel, pubcomp`.
+- **Broker/Lib:** getestet gegen `eclipse-mosquitto:2` und `mqtt@5.15.1`.
 
 ## Broker setup
 
@@ -95,7 +115,7 @@ als optionaler Schritt dokumentiert.
 - Pro Level: genaue Befehlsfolge (Subscriber starten/stoppen, Publisher senden,
   Subscriber neu starten) und **was man in der Ausgabe beobachten soll**.
 - Erklärtabelle QoS 0/1/2 mit erwartetem Ergebnis.
-- Hinweis auf den QoS-1-`manualAcks`-Trick.
+- Hinweis auf den QoS-1-`--kill-before-ack`-Modus zum Erzwingen eines Duplikats.
 
 ## Testing / verification
 
@@ -103,7 +123,7 @@ Manuelle Verifikation über die README-Szenarien (Lehrkontext, interaktiv):
 
 1. Broker hoch.
 2. QoS 0: Lücken in der Summary nach Offline-Phase nachweisbar.
-3. QoS 1: Nachlieferung + mind. ein Duplikat (über manualAcks-Trick) nachweisbar.
+3. QoS 1: Nachlieferung + mind. ein Duplikat (über `--kill-before-ack`) nachweisbar.
 4. QoS 2: vollständige Nachlieferung ohne Duplikat nachweisbar.
 5. Handshake-Logs zeigen je Level die korrekte Paketfolge.
 ```
