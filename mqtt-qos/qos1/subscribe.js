@@ -4,8 +4,10 @@
 // Effects shown:
 //  - Offline messages ARE redelivered (unlike QoS 0).
 //  - DUPLICATES are possible. Run with `--kill-before-ack` to force one:
-//    on the first message we destroy the socket before the PUBACK is sent,
-//    so the broker redelivers it with dup=true on the next run.
+//    on the first message we destroy the socket before the PUBACK is sent.
+//    mqtt.js then auto-reconnects, the broker redelivers the un-acked message
+//    with dup=true, and THIS SAME process receives it a second time — so the
+//    Ctrl-C summary reports duplicates: 1.
 import mqtt from 'mqtt';
 import { BROKER_URL, TOPICS, log, logHandshake, SeqTracker, printSummary } from '../common.js';
 
@@ -24,10 +26,11 @@ client.on('message', (topic, payload, packet) => {
   log('sub-qos1', `recv seq=${seq} qos=${packet.qos} dup=${packet.dup}`);
   if (KILL_BEFORE_ACK && !killed) {
     killed = true;
-    log('sub-qos1', '--kill-before-ack: destroying socket BEFORE PUBACK (forces redelivery)');
-    client.stream.destroy(); // hard TCP close before the auto-PUBACK flushes
-    printSummary('sub-qos1', tracker);
-    process.exit(0);
+    log('sub-qos1', '--kill-before-ack: destroying socket BEFORE PUBACK, then auto-reconnecting');
+    // Hard TCP close before the auto-PUBACK flushes. mqtt.js auto-reconnects
+    // (default reconnectPeriod) and the broker redelivers this message with
+    // dup=true, so we receive it twice. Press Ctrl-C to see duplicates: 1.
+    client.stream.destroy();
   }
 });
 

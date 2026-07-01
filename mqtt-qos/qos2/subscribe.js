@@ -2,9 +2,11 @@
 //
 // Effects shown:
 //  - Offline messages ARE redelivered (like QoS 1).
-//  - NO duplicates: even if we destroy the socket mid-handshake
-//    (--kill-mid-handshake), the broker redelivers the PUBLISH but mqtt.js
-//    dedupes it via the message id, so the app sees each message exactly once.
+//  - NO duplicates: run with `--kill-mid-handshake` to destroy the socket right
+//    after the first message. mqtt.js auto-reconnects and the QoS 2 handshake
+//    resumes, but the message is NOT handed to the app a second time — so the
+//    Ctrl-C summary stays at exactly one delivery, duplicates: 0. Contrast this
+//    with the QoS 1 --kill-before-ack run, which DOES produce a duplicate.
 import mqtt from 'mqtt';
 import { BROKER_URL, TOPICS, log, logHandshake, SeqTracker, printSummary } from '../common.js';
 
@@ -23,10 +25,11 @@ client.on('message', (topic, payload, packet) => {
   log('sub-qos2', `recv seq=${seq} qos=${packet.qos} dup=${packet.dup}`);
   if (KILL_MID && !killed) {
     killed = true;
-    log('sub-qos2', '--kill-mid-handshake: destroying socket mid-handshake (still exactly-once on rerun)');
+    log('sub-qos2', '--kill-mid-handshake: destroying socket mid-handshake, then auto-reconnecting');
+    // Hard TCP close mid-handshake. mqtt.js auto-reconnects and the QoS 2
+    // handshake resumes, but the message is NOT delivered to the app again.
+    // Press Ctrl-C to confirm exactly one delivery (duplicates: 0).
     client.stream.destroy();
-    printSummary('sub-qos2', tracker);
-    process.exit(0);
   }
 });
 

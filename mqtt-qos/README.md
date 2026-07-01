@@ -49,16 +49,17 @@ node qos1/subscribe.js        # terminal 1, then Ctrl-C
 node qos1/publish.js 5 500    # terminal 2, while offline
 node qos1/subscribe.js        # terminal 1: reconnect -> the 5 msgs arrive
 ```
-To **force a duplicate**, run the subscriber in kill-before-ack mode. It receives
-one message, drops the TCP socket before sending PUBACK, so the broker redelivers:
+To **force a duplicate**, run the subscriber in kill-before-ack mode, then publish
+one message:
 
 ```bash
-node qos1/publish.js 1 0                 # publish one message
-node qos1/subscribe.js --kill-before-ack # receives it, dies before PUBACK
-node qos1/subscribe.js                   # reconnect -> same message, dup=true
+node qos1/subscribe.js --kill-before-ack   # terminal 1
+node qos1/publish.js 1 0                    # terminal 2
 ```
-The second run logs `dup=true`; run it in normal mode afterwards and the summary
-counts the duplicate.
+The subscriber receives the message (`dup=false`), drops the socket before its
+PUBACK, then auto-reconnects; the broker redelivers the un-acked message
+(`dup=true`) to the **same** process. Press Ctrl-C — the summary reports
+`received (incl. dups): 2` and `duplicates: 1`.
 
 ## Demo C — QoS 2 is exactly once
 
@@ -67,14 +68,17 @@ node qos2/subscribe.js        # terminal 1, then Ctrl-C
 node qos2/publish.js 5 500    # terminal 2, while offline
 node qos2/subscribe.js        # terminal 1: reconnect -> the 5 msgs arrive
 ```
-Even if the subscriber is killed mid-handshake, the message is **not** delivered
-twice — the broker redelivers the PUBLISH but the client dedupes it by message id:
+Even if the subscriber's socket is destroyed right after it receives a message,
+QoS 2 does **not** deliver it twice:
 
 ```bash
-node qos2/publish.js 1 0
-node qos2/subscribe.js --kill-mid-handshake
-node qos2/subscribe.js        # reconnect -> exactly one delivery, no duplicate
+node qos2/subscribe.js --kill-mid-handshake   # terminal 1
+node qos2/publish.js 1 0                       # terminal 2
 ```
+The subscriber receives the message (`dup=false`), drops the socket, then
+auto-reconnects and finishes the handshake — but the message is not handed to the
+app again. Press Ctrl-C — the summary reports `received (incl. dups): 1` and
+`duplicates: 0` (contrast with QoS 1 above, which reports a duplicate).
 
 ## Automated test
 
