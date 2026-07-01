@@ -38,9 +38,11 @@ node qos0/subscribe.js        # terminal 1: subscribe, then Ctrl-C to go offline
 node qos0/publish.js 5 500    # terminal 2: publish 5 msgs while sub is offline
 node qos0/subscribe.js        # terminal 1: reconnect
 ```
-The reconnected subscriber receives **nothing** from the offline window; its
-summary reports the missing sequence numbers. (The persistent session is kept,
-but QoS 0 messages are never queued.)
+The reconnected subscriber receives **nothing** from the offline window: compare
+the publisher's `published seq=1..5` against the subscriber's summary showing
+`received (incl. dups): 0`. Run the exact same steps with `qos1/` or `qos2/` and
+all 5 messages arrive instead. (The persistent session is kept, but QoS 0 messages
+are never queued for an offline client.)
 
 ## Demo B — QoS 1 redelivers, and can duplicate
 
