@@ -21,7 +21,13 @@ logHandshake(client, 'sub-qos1');
 
 let killed = false;
 client.on('message', (topic, payload, packet) => {
-  const { seq } = JSON.parse(payload.toString());
+  let seq;
+  try {
+    ({ seq } = JSON.parse(payload.toString()));
+  } catch {
+    log('sub-qos1', `ignoring non-JSON message: ${payload.toString()}`);
+    return;
+  }
   tracker.record(seq);
   log('sub-qos1', `recv seq=${seq} qos=${packet.qos} dup=${packet.dup}`);
   if (KILL_BEFORE_ACK && !killed) {

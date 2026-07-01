@@ -85,7 +85,8 @@ app again. Press Ctrl-C — the summary reports `received (incl. dups): 1` and
 ## Automated test
 
 ```bash
-npm test                      # proves QoS0 loss vs QoS1 redelivery (broker required)
+npm run test:unit             # SeqTracker unit tests only (no broker needed)
+npm test                      # + integration: QoS0 loss vs QoS1 redelivery (broker required)
 ```
 
 ## Cleanup

@@ -40,6 +40,9 @@ export class SeqTracker {
     this.seen.set(seq, (this.seen.get(seq) || 0) + 1);
     if (seq > this.highestSeq) this.highestSeq = seq;
   }
+  // Assumes publishers emit a contiguous 1-based sequence (seq = 1..COUNT),
+  // which is how the publish.js programs number messages; `missing` is computed
+  // as the gaps in 1..highestSeq.
   summary() {
     let duplicates = 0;
     for (const count of this.seen.values()) duplicates += count - 1;

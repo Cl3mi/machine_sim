@@ -7,7 +7,8 @@
   "scripts": {
     "broker:up": "docker compose -f docker-compose.mqtt.yml up",
     "broker:down": "docker compose -f docker-compose.mqtt.yml down",
-    "test": "node --test"
+    "test": "node --test",
+    "test:unit": "node --test test/common.test.js"
   },
   "dependencies": {
     "mqtt": "^5.15.1"

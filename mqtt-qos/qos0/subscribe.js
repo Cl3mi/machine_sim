@@ -17,7 +17,13 @@ logHandshake(client, 'sub-qos0');
 // Attach the message handler synchronously (before CONNACK) so queued
 // messages delivered right after reconnect are not missed.
 client.on('message', (topic, payload, packet) => {
-  const { seq } = JSON.parse(payload.toString());
+  let seq;
+  try {
+    ({ seq } = JSON.parse(payload.toString()));
+  } catch {
+    log('sub-qos0', `ignoring non-JSON message: ${payload.toString()}`);
+    return;
+  }
   tracker.record(seq);
   log('sub-qos0', `recv seq=${seq} qos=${packet.qos} dup=${packet.dup}`);
 });
